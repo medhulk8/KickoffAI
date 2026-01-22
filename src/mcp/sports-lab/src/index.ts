@@ -11,6 +11,9 @@
  * - get_baseline_probs: Get baseline probabilities for a match
  * - log_prediction: Record a prediction in the database
  * - evaluate_prediction: Compute accuracy metrics for a prediction
+ * - get_team_form: Analyze a team's recent performance
+ * - get_league_stats: Calculate league-wide statistics
+ * - aggregate_evaluations: Aggregate prediction performance metrics
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -77,6 +80,67 @@ interface EvaluationResult {
   llm_correct: boolean;
   baseline_predicted: "H" | "D" | "A";
   llm_predicted: "H" | "D" | "A";
+}
+
+/** Team form analysis result */
+interface TeamForm {
+  team: string;
+  window: number;
+  matches_analyzed: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  points: number;
+  goals_scored: number;
+  goals_conceded: number;
+  goal_difference: number;
+  form_string: string;
+  points_per_game: number;
+  win_rate: number;
+  recent_matches: Array<{
+    date: string;
+    opponent: string;
+    venue: "H" | "A";
+    goals_for: number;
+    goals_against: number;
+    result: "W" | "D" | "L";
+  }>;
+}
+
+/** League statistics result */
+interface LeagueStats {
+  total_matches: number;
+  seasons_included: string[];
+  home_wins: number;
+  draws: number;
+  away_wins: number;
+  home_win_pct: number;
+  draw_pct: number;
+  away_win_pct: number;
+  total_goals: number;
+  avg_goals_per_match: number;
+  home_goals: number;
+  away_goals: number;
+  avg_home_goals: number;
+  avg_away_goals: number;
+  home_advantage: number;
+}
+
+/** Aggregated evaluation metrics */
+interface AggregatedEvaluations {
+  total_predictions: number;
+  baseline_correct: number;
+  llm_correct: number;
+  baseline_accuracy: number;
+  llm_accuracy: number;
+  avg_baseline_brier: number;
+  avg_llm_brier: number;
+  brier_improvement: number;
+  filters_applied: {
+    start_date?: string;
+    end_date?: string;
+    team?: string;
+  };
 }
 
 // ============================================================================
@@ -689,6 +753,382 @@ server.tool(
       } catch {
         // Evaluation may already exist, that's okay
       }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } finally {
+      db.close();
+    }
+  }
+);
+
+// ============================================================================
+// Tool 6: get_team_form
+// ============================================================================
+
+/**
+ * Analyze a team's recent performance over last N matches.
+ *
+ * Calculates wins, draws, losses, points, goals scored/conceded,
+ * and generates a form string (e.g., "WWDLW" for Win-Win-Draw-Loss-Win).
+ *
+ * Handles both home and away matches correctly:
+ * - If team is home_team: won if result='H', drew if result='D', lost if result='A'
+ * - If team is away_team: won if result='A', drew if result='D', lost if result='H'
+ *
+ * @param team_name - Name of the team to analyze
+ * @param window - Number of recent matches to analyze (default 5)
+ * @returns TeamForm object with comprehensive form statistics
+ */
+server.tool(
+  "get_team_form",
+  "Analyze a team's recent performance over last N matches",
+  {
+    team_name: z.string().min(1).describe("Name of the team to analyze"),
+    window: z.number().int().min(1).max(38).default(5).describe("Number of recent matches to analyze"),
+  },
+  async ({ team_name, window }): Promise<{ content: Array<{ type: "text"; text: string }> }> => {
+    const db = getDatabase();
+
+    try {
+      const matches = db
+        .prepare(
+          `SELECT * FROM matches
+           WHERE home_team = ? OR away_team = ?
+           ORDER BY date DESC
+           LIMIT ?`
+        )
+        .all(team_name, team_name, window) as Match[];
+
+      if (matches.length === 0) {
+        // Try fuzzy match
+        const fuzzyMatches = db
+          .prepare(
+            `SELECT DISTINCT home_team FROM matches WHERE LOWER(home_team) LIKE LOWER(?)
+             UNION
+             SELECT DISTINCT away_team FROM matches WHERE LOWER(away_team) LIKE LOWER(?)`
+          )
+          .all(`%${team_name}%`, `%${team_name}%`) as Array<{ home_team: string }>;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: `No matches found for team "${team_name}"`,
+                suggestions: fuzzyMatches.map((r) => r.home_team).slice(0, 5),
+              }),
+            },
+          ],
+        };
+      }
+
+      // Analyze each match from team's perspective
+      let wins = 0;
+      let draws = 0;
+      let losses = 0;
+      let goalsScored = 0;
+      let goalsConceded = 0;
+      const formChars: string[] = [];
+      const recentMatches: TeamForm["recent_matches"] = [];
+
+      for (const match of matches) {
+        const isHome = match.home_team === team_name;
+        const venue: "H" | "A" = isHome ? "H" : "A";
+        const opponent = isHome ? match.away_team : match.home_team;
+        const goalsFor = isHome ? match.home_goals : match.away_goals;
+        const goalsAgainst = isHome ? match.away_goals : match.home_goals;
+
+        goalsScored += goalsFor;
+        goalsConceded += goalsAgainst;
+
+        let result: "W" | "D" | "L";
+        if (match.result === "D") {
+          draws++;
+          result = "D";
+          formChars.push("D");
+        } else if ((isHome && match.result === "H") || (!isHome && match.result === "A")) {
+          wins++;
+          result = "W";
+          formChars.push("W");
+        } else {
+          losses++;
+          result = "L";
+          formChars.push("L");
+        }
+
+        recentMatches.push({
+          date: match.date,
+          opponent,
+          venue,
+          goals_for: goalsFor,
+          goals_against: goalsAgainst,
+          result,
+        });
+      }
+
+      const points = wins * 3 + draws;
+      const matchesAnalyzed = matches.length;
+
+      const form: TeamForm = {
+        team: team_name,
+        window,
+        matches_analyzed: matchesAnalyzed,
+        wins,
+        draws,
+        losses,
+        points,
+        goals_scored: goalsScored,
+        goals_conceded: goalsConceded,
+        goal_difference: goalsScored - goalsConceded,
+        form_string: formChars.join(""),
+        points_per_game: Math.round((points / matchesAnalyzed) * 100) / 100,
+        win_rate: Math.round((wins / matchesAnalyzed) * 100) / 100,
+        recent_matches: recentMatches,
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(form, null, 2),
+          },
+        ],
+      };
+    } finally {
+      db.close();
+    }
+  }
+);
+
+// ============================================================================
+// Tool 7: get_league_stats
+// ============================================================================
+
+/**
+ * Calculate league-wide statistics for a given season.
+ *
+ * Provides aggregate statistics including:
+ * - Match counts and result distribution
+ * - Average goals per match
+ * - Home advantage calculation
+ *
+ * @param season - Season like "2122" or "2324", if null uses all seasons
+ * @returns LeagueStats object with comprehensive league statistics
+ */
+server.tool(
+  "get_league_stats",
+  "Calculate league-wide statistics for a given season",
+  {
+    season: z.string().optional().describe("Season like '2122', '2223', '2324'. If not provided, uses all seasons"),
+  },
+  async ({ season }): Promise<{ content: Array<{ type: "text"; text: string }> }> => {
+    const db = getDatabase();
+
+    try {
+      // Build query based on whether season is specified
+      let query = "SELECT * FROM matches";
+      const params: string[] = [];
+
+      if (season) {
+        query += " WHERE season = ?";
+        params.push(season);
+      }
+
+      const matches = db.prepare(query).all(...params) as Match[];
+
+      if (matches.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: season
+                  ? `No matches found for season "${season}"`
+                  : "No matches found in database",
+                available_seasons: (db
+                  .prepare("SELECT DISTINCT season FROM matches ORDER BY season")
+                  .all() as Array<{ season: string }>)
+                  .map((r) => r.season),
+              }),
+            },
+          ],
+        };
+      }
+
+      // Calculate statistics
+      let homeWins = 0;
+      let draws = 0;
+      let awayWins = 0;
+      let totalHomeGoals = 0;
+      let totalAwayGoals = 0;
+      const seasonsSet = new Set<string>();
+
+      for (const match of matches) {
+        seasonsSet.add(match.season);
+        totalHomeGoals += match.home_goals;
+        totalAwayGoals += match.away_goals;
+
+        if (match.result === "H") homeWins++;
+        else if (match.result === "D") draws++;
+        else awayWins++;
+      }
+
+      const totalMatches = matches.length;
+      const totalGoals = totalHomeGoals + totalAwayGoals;
+
+      const stats: LeagueStats = {
+        total_matches: totalMatches,
+        seasons_included: Array.from(seasonsSet).sort(),
+        home_wins: homeWins,
+        draws: draws,
+        away_wins: awayWins,
+        home_win_pct: Math.round((homeWins / totalMatches) * 1000) / 10,
+        draw_pct: Math.round((draws / totalMatches) * 1000) / 10,
+        away_win_pct: Math.round((awayWins / totalMatches) * 1000) / 10,
+        total_goals: totalGoals,
+        avg_goals_per_match: Math.round((totalGoals / totalMatches) * 100) / 100,
+        home_goals: totalHomeGoals,
+        away_goals: totalAwayGoals,
+        avg_home_goals: Math.round((totalHomeGoals / totalMatches) * 100) / 100,
+        avg_away_goals: Math.round((totalAwayGoals / totalMatches) * 100) / 100,
+        home_advantage: Math.round(((homeWins - awayWins) / totalMatches) * 1000) / 10,
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(stats, null, 2),
+          },
+        ],
+      };
+    } finally {
+      db.close();
+    }
+  }
+);
+
+// ============================================================================
+// Tool 8: aggregate_evaluations
+// ============================================================================
+
+/**
+ * Aggregate prediction performance metrics across multiple evaluations.
+ *
+ * Calculates overall accuracy and Brier scores for both baseline and LLM
+ * predictions, with optional filtering by date range or team.
+ *
+ * @param start_date - Filter evaluations after this date (ISO format)
+ * @param end_date - Filter evaluations before this date (ISO format)
+ * @param team - Filter for matches involving this team
+ * @returns AggregatedEvaluations object with performance metrics
+ */
+server.tool(
+  "aggregate_evaluations",
+  "Aggregate prediction performance metrics across multiple evaluations",
+  {
+    start_date: z.string().optional().describe("Filter evaluations after this date (YYYY-MM-DD)"),
+    end_date: z.string().optional().describe("Filter evaluations before this date (YYYY-MM-DD)"),
+    team: z.string().optional().describe("Filter for matches involving this team"),
+  },
+  async ({ start_date, end_date, team }): Promise<{ content: Array<{ type: "text"; text: string }> }> => {
+    const db = getDatabase();
+
+    try {
+      // Build query with optional filters
+      let query = `
+        SELECT e.*, m.home_team, m.away_team, m.date
+        FROM evaluations e
+        JOIN matches m ON e.match_id = m.match_id
+        WHERE 1=1
+      `;
+      const params: string[] = [];
+
+      if (start_date) {
+        query += " AND m.date >= ?";
+        params.push(start_date);
+      }
+
+      if (end_date) {
+        query += " AND m.date <= ?";
+        params.push(end_date);
+      }
+
+      if (team) {
+        query += " AND (m.home_team = ? OR m.away_team = ?)";
+        params.push(team, team);
+      }
+
+      const evaluations = db.prepare(query).all(...params) as Array<{
+        evaluation_id: number;
+        match_id: number;
+        prediction_id: number;
+        outcome: string;
+        baseline_brier_score: number;
+        llm_brier_score: number;
+        baseline_correct: number;
+        llm_correct: number;
+        error_tags: string | null;
+        critique_text: string | null;
+        home_team: string;
+        away_team: string;
+        date: string;
+      }>;
+
+      if (evaluations.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: "No evaluations found matching the specified filters",
+                filters_applied: { start_date, end_date, team },
+                suggestion: "Try broadening your filters or run more predictions first",
+              }),
+            },
+          ],
+        };
+      }
+
+      // Aggregate metrics
+      let baselineCorrectCount = 0;
+      let llmCorrectCount = 0;
+      let totalBaselineBrier = 0;
+      let totalLlmBrier = 0;
+
+      for (const evaluation of evaluations) {
+        if (evaluation.baseline_correct) baselineCorrectCount++;
+        if (evaluation.llm_correct) llmCorrectCount++;
+        totalBaselineBrier += evaluation.baseline_brier_score;
+        totalLlmBrier += evaluation.llm_brier_score;
+      }
+
+      const totalPredictions = evaluations.length;
+      const avgBaselineBrier = totalBaselineBrier / totalPredictions;
+      const avgLlmBrier = totalLlmBrier / totalPredictions;
+
+      const result: AggregatedEvaluations = {
+        total_predictions: totalPredictions,
+        baseline_correct: baselineCorrectCount,
+        llm_correct: llmCorrectCount,
+        baseline_accuracy: Math.round((baselineCorrectCount / totalPredictions) * 1000) / 10,
+        llm_accuracy: Math.round((llmCorrectCount / totalPredictions) * 1000) / 10,
+        avg_baseline_brier: Math.round(avgBaselineBrier * 10000) / 10000,
+        avg_llm_brier: Math.round(avgLlmBrier * 10000) / 10000,
+        brier_improvement: Math.round((avgBaselineBrier - avgLlmBrier) * 10000) / 10000,
+        filters_applied: {
+          start_date,
+          end_date,
+          team,
+        },
+      };
 
       return {
         content: [

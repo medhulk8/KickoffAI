@@ -5,7 +5,9 @@
       "Bash(ls:*)",
       "Bash(pip install:*)",
       "Bash(python3:*)",
-      "Bash(source venv/bin/activate)"
+      "Bash(source venv/bin/activate)",
+      "Bash(python:*)",
+      "Bash(source /Users/medhul/asil_project/venv/bin/activate:*)"
     ]
   }
 }
