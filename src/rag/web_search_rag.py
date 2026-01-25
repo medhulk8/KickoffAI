@@ -72,7 +72,8 @@ class WebSearchRAG:
         self,
         queries: List[str],
         max_searches: int = 5,
-        max_results_per_query: int = 5
+        max_results_per_query: int = 5,
+        kg_insights: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Execute multiple searches using smart multi-source search.
@@ -87,6 +88,7 @@ class WebSearchRAG:
             queries: List of search queries to execute
             max_searches: Maximum number of searches to perform
             max_results_per_query: Maximum results per search (1-10)
+            kg_insights: Optional KG insights to include in formatted output
 
         Returns:
             Dictionary containing:
@@ -134,8 +136,8 @@ class WebSearchRAG:
             results[query] = query_results
             self.search_cache[query] = query_results
 
-        # Combine all content for LLM context
-        all_content = self._format_for_llm(results)
+        # Combine all content for LLM context (with optional KG insights)
+        all_content = self._format_for_llm(results, kg_insights=kg_insights)
 
         return {
             "queries_executed": api_calls,
@@ -145,17 +147,34 @@ class WebSearchRAG:
             "sources": sources
         }
 
-    def _format_for_llm(self, results: Dict[str, Any]) -> str:
+    def _format_for_llm(
+        self,
+        results: Dict[str, Any],
+        kg_insights: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
         Format search results into a clean context string for LLM.
 
+        Highlights injury/suspension information prominently.
+        Optionally includes KG tactical insights at the top.
+
         Args:
             results: Dictionary of query -> results
+            kg_insights: Optional KG insights to include at top
 
         Returns:
             Formatted string suitable for including in LLM prompts
         """
-        sections = []
+        output_parts = []
+
+        # Add KG insights at top if available
+        if kg_insights and kg_insights.get('confidence') not in ['none', None]:
+            kg_section = self._format_kg_summary(kg_insights)
+            output_parts.append(kg_section)
+
+        # Separate injury results from other results
+        injury_sections = []
+        other_sections = []
 
         for query, items in results.items():
             if isinstance(items, dict) and "error" in items:
@@ -164,7 +183,15 @@ class WebSearchRAG:
             if not items:
                 continue
 
-            section = f"### Search: {query}\n"
+            # Check if this is an injury/suspension query
+            is_injury_query = any(kw in query.lower() for kw in ['injury', 'suspension', 'injured', 'suspended'])
+
+            # Format the section
+            if is_injury_query:
+                section = f"### INJURY/SUSPENSION UPDATE: {query}\n"
+            else:
+                section = f"### Search: {query}\n"
+
             for i, item in enumerate(items[:3], 1):  # Top 3 per query
                 title = item.get("title", "Untitled")
                 content = item.get("content", "")
@@ -178,28 +205,114 @@ class WebSearchRAG:
                 section += f"{content}\n"
                 section += f"Source: {url}\n"
 
-            sections.append(section)
+            if is_injury_query:
+                injury_sections.append(section)
+            else:
+                other_sections.append(section)
 
-        if not sections:
+        # Prioritize injury information
+        if injury_sections:
+            output_parts.append("## CRITICAL: INJURY & SUSPENSION NEWS\n")
+            output_parts.extend(injury_sections)
+
+        if other_sections:
+            if injury_sections:
+                output_parts.append("\n## OTHER CONTEXT\n")
+            output_parts.extend(other_sections)
+
+        if not injury_sections and not other_sections:
             return "No relevant web search results found."
 
-        return "\n---\n".join(sections)
+        return "\n---\n".join(output_parts)
+
+    def _format_kg_summary(self, kg_insights: Dict[str, Any]) -> str:
+        """
+        Format KG insights into a summary section.
+
+        Args:
+            kg_insights: Knowledge graph tactical insights
+
+        Returns:
+            Formatted KG summary string
+        """
+        home_styles = kg_insights.get('home_styles', [])
+        away_styles = kg_insights.get('away_styles', [])
+        matchup = kg_insights.get('matchup_summary', 'No clear tactical advantage')
+        confidence = kg_insights.get('confidence', 'none').upper()
+
+        home_style_str = ', '.join(home_styles) if home_styles else 'Unknown'
+        away_style_str = ', '.join(away_styles) if away_styles else 'Unknown'
+
+        return f"""## TACTICAL CONTEXT (from Knowledge Graph)
+- **Home Team Style:** {home_style_str}
+- **Away Team Style:** {away_style_str}
+- **Matchup Analysis:** {matchup}
+- **KG Confidence:** {confidence}
+"""
 
     def generate_match_queries(
+        self,
+        home_team: str,
+        away_team: str,
+        match_date: Optional[str] = None,
+        kg_insights: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Generate relevant search queries for a match.
+
+        Dynamically generates queries based on what information is available:
+        - Always: Recent form, injuries/suspensions
+        - Conditional: Tactics (only if KG has no tactical info)
+        - If space: Head-to-head history
+
+        Args:
+            home_team: Name of home team
+            away_team: Name of away team
+            match_date: Optional match date (YYYY-MM-DD format)
+            kg_insights: Optional KG insights to conditionally skip tactics search
+
+        Returns:
+            List of search queries (5-7 queries depending on KG info)
+        """
+        year = datetime.now().year if not match_date else match_date[:4]
+
+        queries = []
+
+        # Priority 1: Recent form (ALWAYS - critical for prediction)
+        queries.append(f"{home_team} last 5 matches results {year}")
+        queries.append(f"{away_team} last 5 matches results {year}")
+
+        # Priority 2: Injuries/Suspensions (CRITICAL - affects predictions significantly)
+        queries.append(f"{home_team} injury news latest")
+        queries.append(f"{away_team} injury suspension news")
+
+        # Priority 3: Tactics (CONDITIONAL - only if KG has no info)
+        kg_confidence = 'none'
+        if kg_insights:
+            kg_confidence = kg_insights.get('confidence', 'none')
+
+        if kg_confidence == 'none' or kg_confidence == 'low':
+            # No/low KG info, search for tactics
+            queries.append(f"{home_team} playing style tactics {year}")
+            queries.append(f"{away_team} playing style tactics {year}")
+        else:
+            # KG has tactics, search for tactical preview instead
+            queries.append(f"{home_team} vs {away_team} tactical preview {year}")
+
+        # Priority 4: Head-to-head (if space permits)
+        if len(queries) < 7:
+            queries.append(f"{home_team} vs {away_team} recent meetings")
+
+        return queries[:7]  # Limit to 7 queries max
+
+    def generate_basic_queries(
         self,
         home_team: str,
         away_team: str,
         match_date: Optional[str] = None
     ) -> List[str]:
         """
-        Generate relevant search queries for a match.
-
-        Creates queries covering:
-        - Team recent form and results
-        - Injury news
-        - Team news and lineup
-        - Head-to-head history
-        - Tactical analysis
+        Generate basic queries without KG awareness (backward compatible).
 
         Args:
             home_team: Name of home team
@@ -207,40 +320,32 @@ class WebSearchRAG:
             match_date: Optional match date (YYYY-MM-DD format)
 
         Returns:
-            List of search queries (typically 4-6 queries)
+            List of 5 search queries
         """
-        year = datetime.now().year if not match_date else match_date[:4]
-
-        queries = [
-            f"{home_team} recent form results {year}",
-            f"{away_team} recent form results {year}",
-            f"{home_team} injuries team news",
-            f"{away_team} injuries team news",
-            f"{home_team} vs {away_team} preview prediction",
-        ]
-
-        return queries
+        return self.generate_match_queries(home_team, away_team, match_date, kg_insights=None)
 
     def get_match_context(
         self,
         home_team: str,
         away_team: str,
         match_date: Optional[str] = None,
-        max_searches: int = 5
+        max_searches: int = 5,
+        kg_insights: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Get comprehensive web context for a match.
 
         Convenience method that:
-        1. Generates relevant queries for the match
+        1. Generates relevant queries for the match (conditionally based on KG)
         2. Executes searches
-        3. Returns formatted context
+        3. Returns formatted context with injury info highlighted
 
         Args:
             home_team: Name of home team
             away_team: Name of away team
             match_date: Optional match date (YYYY-MM-DD)
             max_searches: Maximum searches to perform
+            kg_insights: Optional KG insights to conditionally skip tactics search
 
         Returns:
             Dictionary with search results and formatted context
@@ -250,8 +355,12 @@ class WebSearchRAG:
             >>> context = rag.get_match_context("Liverpool", "Arsenal")
             >>> print(context["all_content"])
         """
-        queries = self.generate_match_queries(home_team, away_team, match_date)
-        return self.execute_searches(queries, max_searches=max_searches)
+        queries = self.generate_match_queries(
+            home_team, away_team, match_date, kg_insights=kg_insights
+        )
+        return self.execute_searches(
+            queries, max_searches=max_searches, kg_insights=kg_insights
+        )
 
     def search_single(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         """
