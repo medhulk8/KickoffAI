@@ -1,15 +1,17 @@
 """
 Web Search RAG for Football Predictions
 
-This module provides web search capabilities using the Tavily API
-to retrieve real-time information about teams, players, injuries,
-and other relevant football context.
+This module provides web search capabilities with smart fallback:
+- Primary: Tavily API (high quality, rate-limited)
+- Fallback: DuckDuckGo (unlimited, free)
+- Persistent SQLite caching with TTL
 
 Features:
 - Automatic query generation for match context
-- Search result caching to reduce API calls
+- Multi-level caching (session + SQLite)
 - Relevance-based result filtering
 - Formatted context for LLM consumption
+- Token budget management
 
 Usage:
     from src.rag import WebSearchRAG
@@ -21,43 +23,49 @@ Usage:
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from .smart_web_search import SmartWebSearch
 
 
 class WebSearchRAG:
     """
-    Web Search RAG client using Tavily API.
+    Web Search RAG client with smart multi-source search.
 
-    Tavily provides high-quality search results optimized for AI/LLM use cases,
-    with pre-extracted content snippets and relevance scoring.
+    Uses SmartWebSearch for intelligent caching and fallback:
+    - Priority: Session Cache → DB Cache → Tavily → DuckDuckGo
+    - Persistent SQLite caching reduces API calls
+    - DuckDuckGo fallback when Tavily quota exhausted
 
     Attributes:
-        tavily: TavilyClient instance
-        search_cache: Dict caching search results by query
+        smart_search: SmartWebSearch instance
+        search_cache: Dict for session-level caching (legacy compatibility)
     """
 
-    def __init__(self, tavily_api_key: Optional[str] = None):
+    def __init__(
+        self,
+        tavily_api_key: Optional[str] = None,
+        cache_ttl_hours: int = 24,
+        max_tavily_per_session: int = 50
+    ):
         """
-        Initialize WebSearchRAG with Tavily API.
+        Initialize WebSearchRAG with smart multi-source search.
 
         Args:
             tavily_api_key: API key from tavily.com
                            If not provided, reads from TAVILY_API_KEY env var
-                           Free tier: 1000 searches/month
+            cache_ttl_hours: How long to cache results (default 24 hours)
+            max_tavily_per_session: Max Tavily calls per session (budget control)
 
-        Raises:
-            ValueError: If no API key provided or found in environment
+        Note:
+            No longer raises ValueError if API key missing - will use DuckDuckGo fallback
         """
-        from tavily import TavilyClient
+        # Initialize smart search with multi-source fallback
+        self.smart_search = SmartWebSearch(
+            tavily_api_key=tavily_api_key,
+            cache_ttl_hours=cache_ttl_hours,
+            max_tavily_per_session=max_tavily_per_session
+        )
 
-        api_key = tavily_api_key or os.environ.get("TAVILY_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Tavily API key required. Either pass tavily_api_key parameter "
-                "or set TAVILY_API_KEY environment variable. "
-                "Get a free key at: https://tavily.com"
-            )
-
-        self.tavily = TavilyClient(api_key=api_key)
+        # Legacy compatibility - keep session cache dict
         self.search_cache: Dict[str, Dict[str, Any]] = {}
 
     def execute_searches(
@@ -67,13 +75,13 @@ class WebSearchRAG:
         max_results_per_query: int = 5
     ) -> Dict[str, Any]:
         """
-        Execute multiple searches using Tavily API.
+        Execute multiple searches using smart multi-source search.
 
         For each query:
-        1. Check cache first (avoid duplicate API calls)
-        2. If not cached, call Tavily search API
-        3. Extract relevant content from response
-        4. Cache result for future use
+        1. Check session cache (same query this session)
+        2. Check SQLite cache (persistent across sessions)
+        3. Try Tavily API (high quality, rate-limited)
+        4. Fallback to DuckDuckGo (unlimited, free)
 
         Args:
             queries: List of search queries to execute
@@ -82,10 +90,11 @@ class WebSearchRAG:
 
         Returns:
             Dictionary containing:
-            - queries_executed: Number of searches performed
-            - cached_hits: Number of cache hits
+            - queries_executed: Number of actual API calls made
+            - cached_hits: Number of cache hits (session + DB)
             - results: Dict mapping query -> list of results
             - all_content: Combined content for LLM context
+            - sources: Dict showing which source was used per query
 
         Example:
             >>> rag = WebSearchRAG(api_key="...")
@@ -94,51 +103,46 @@ class WebSearchRAG:
         """
         results = {}
         cached_hits = 0
+        api_calls = 0
+        sources = {}
         queries_to_execute = queries[:max_searches]
 
         for query in queries_to_execute:
-            # Check cache first
-            if query in self.search_cache:
-                results[query] = self.search_cache[query]
+            # Use SmartWebSearch which handles all caching and fallback
+            search_result = self.smart_search.search(
+                query=query,
+                max_results=max_results_per_query
+            )
+
+            # Extract results
+            query_results = search_result.get('results', [])
+
+            # Sort by relevance score
+            if query_results:
+                query_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+            # Track source and caching
+            source = search_result.get('source', 'unknown')
+            sources[query] = source
+
+            if search_result.get('cached', False):
                 cached_hits += 1
-                continue
+            else:
+                api_calls += 1
 
-            try:
-                # Execute Tavily search
-                response = self.tavily.search(
-                    query=query,
-                    max_results=max_results_per_query,
-                    search_depth="basic"  # Use "advanced" for deeper search
-                )
-
-                # Extract and format results
-                formatted_results = []
-                for item in response.get("results", []):
-                    formatted_results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "content": item.get("content", ""),
-                        "score": item.get("score", 0.0)
-                    })
-
-                # Sort by relevance score
-                formatted_results.sort(key=lambda x: x["score"], reverse=True)
-
-                # Cache and store
-                self.search_cache[query] = formatted_results
-                results[query] = formatted_results
-
-            except Exception as e:
-                results[query] = {"error": str(e)}
+            # Store results (also in legacy cache for compatibility)
+            results[query] = query_results
+            self.search_cache[query] = query_results
 
         # Combine all content for LLM context
         all_content = self._format_for_llm(results)
 
         return {
-            "queries_executed": len(queries_to_execute) - cached_hits,
+            "queries_executed": api_calls,
             "cached_hits": cached_hits,
             "results": results,
-            "all_content": all_content
+            "all_content": all_content,
+            "sources": sources
         }
 
     def _format_for_llm(self, results: Dict[str, Any]) -> str:
@@ -264,8 +268,18 @@ class WebSearchRAG:
         return result["results"].get(query, [])
 
     def clear_cache(self):
-        """Clear the search result cache."""
+        """Clear both session and persistent cache."""
         self.search_cache.clear()
+        self.smart_search.cache.clear()
+
+    def reset_session(self):
+        """Reset session tracking (for new evaluation run)."""
+        self.search_cache.clear()
+        self.smart_search.reset_session()
+
+    def get_search_stats(self) -> Dict[str, Any]:
+        """Get comprehensive search statistics."""
+        return self.smart_search.get_stats()
 
 
 # ============================================================================

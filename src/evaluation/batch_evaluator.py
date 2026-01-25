@@ -143,6 +143,9 @@ class BatchEvaluator:
         evaluation = result.get('evaluation', {})
         web_context = result.get('web_context', {})
 
+        # Compute web searches performed first (used to infer if skipped)
+        web_searches_performed = len(web_context.get('results', {})) if isinstance(web_context, dict) else 0
+
         metrics = {
             "match_id": result.get('match_id'),
             "home_team": match.get('home_team', 'Unknown'),
@@ -165,10 +168,10 @@ class BatchEvaluator:
             "llm_confidence": result.get('confidence_level', 'unknown'),
             "parse_method": prediction.get('parse_method', 'unknown'),
 
-            # Workflow metadata
-            "skipped_web_search": result.get('skip_web_search', False),
+            # Workflow metadata (infer skipped from 0 searches performed)
+            "skipped_web_search": web_searches_performed == 0,
             "iteration_count": result.get('iteration_count', 0),
-            "web_searches_performed": len(web_context.get('results', {})) if isinstance(web_context, dict) else 0,
+            "web_searches_performed": web_searches_performed,
 
             # KG insights
             "has_kg_insights": bool(result.get('kg_insights') and not result.get('kg_insights', {}).get('error')),
