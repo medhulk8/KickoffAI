@@ -37,6 +37,9 @@ import logging
 # LangGraph imports
 from langgraph.graph import StateGraph, END
 
+# Local imports
+from .confidence_calculator import ConfidenceCalculator
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -532,7 +535,7 @@ def create_workflow_components(
         - Build context from stats + KG + web
         - Call Ollama for prediction
         - Parse response to extract probabilities
-        - Extract confidence level
+        - Calculate confidence using objective ConfidenceCalculator (not LLM self-assessment)
         """
         verbose = state.get("verbose", True)
 
@@ -558,14 +561,31 @@ def create_workflow_components(
             # Parse response
             prediction = _parse_prediction_response(response_text, state["baseline"])
 
+            # Calculate objective confidence using ConfidenceCalculator
+            # (instead of trusting LLM self-assessment)
+            confidence_calc = ConfidenceCalculator()
+            context = {
+                'baseline': state.get('baseline', {}),
+                'kg_insights': state.get('kg_insights', {}),
+                'web_context': state.get('web_context', {}),
+                'home_form': state.get('home_form', {}),
+                'away_form': state.get('away_form', {})
+            }
+            calculated_confidence = confidence_calc.calculate_confidence(prediction, context)
+
+            # Store both LLM's claimed confidence and our calculated confidence
+            prediction['llm_claimed_confidence'] = prediction.get('confidence', 'unknown')
+            prediction['confidence'] = calculated_confidence
+
             if verbose:
                 print(f"   Prediction: H={prediction['home_prob']:.1%}, D={prediction['draw_prob']:.1%}, A={prediction['away_prob']:.1%}")
-                print(f"   Confidence: {prediction['confidence']}")
+                print(f"   LLM claimed: {prediction['llm_claimed_confidence']}")
+                print(f"   Calculated:  {calculated_confidence}")
                 print(f"   Parse method: {prediction['parse_method']}")
 
             return {
                 "prediction": prediction,
-                "confidence_level": prediction["confidence"],
+                "confidence_level": calculated_confidence,
                 "iteration_count": state.get("iteration_count", 0) + 1
             }
 
@@ -583,6 +603,7 @@ def create_workflow_components(
                     "away_prob": baseline["away_prob"],
                     "reasoning": f"LLM error: {e}. Using baseline.",
                     "confidence": "low",
+                    "llm_claimed_confidence": "error",
                     "parse_method": "error_fallback"
                 },
                 "confidence_level": "low",
