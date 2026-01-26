@@ -39,6 +39,7 @@ from langgraph.graph import StateGraph, END
 
 # Local imports
 from .confidence_calculator import ConfidenceCalculator
+from src.data.advanced_stats import AdvancedStatsCalculator
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -85,6 +86,11 @@ class PredictionState(TypedDict, total=False):
     away_form: Dict[str, Any]
     baseline: Dict[str, Any]
 
+    # Advanced stats (populated by stats_collector node)
+    home_advanced_stats: Dict[str, Any]
+    away_advanced_stats: Dict[str, Any]
+    h2h_stats: Dict[str, Any]
+
     # Context gathering (populated by respective nodes)
     kg_insights: Dict[str, Any]
     web_context: Dict[str, Any]
@@ -111,7 +117,17 @@ class PredictionState(TypedDict, total=False):
 # ============================================================================
 
 def _build_prediction_prompt(state: PredictionState) -> str:
-    """Build the LLM prompt from state."""
+    """
+    Build structured 6-step Chain-of-Thought prompt from state.
+
+    Forces systematic reasoning through:
+    1. Recent form analysis
+    2. Advanced statistics analysis
+    3. Tactical matchup analysis
+    4. Head-to-head history
+    5. Current context & news
+    6. Baseline check & final synthesis
+    """
     match = state["match"]
     home_form = state["home_form"]
     away_form = state["away_form"]
@@ -119,42 +135,127 @@ def _build_prediction_prompt(state: PredictionState) -> str:
     kg = state.get("kg_insights", {})
     web = state.get("web_context", {})
 
+    # Get advanced stats (with fallback to empty dicts)
+    home_adv = state.get("home_advanced_stats", {})
+    away_adv = state.get("away_advanced_stats", {})
+    h2h = state.get("h2h_stats", {})
+
+    # Extract nested stats with safe defaults
+    home_att = home_adv.get('attacking', {})
+    home_def = home_adv.get('defensive', {})
+    home_eff = home_adv.get('efficiency', {})
+
+    away_att = away_adv.get('attacking', {})
+    away_def = away_adv.get('defensive', {})
+    away_eff = away_adv.get('efficiency', {})
+
     # Format KG insights
-    kg_text = ""
-    if kg and not kg.get("error"):
-        home_styles = kg.get("home_styles", [])
-        away_styles = kg.get("away_styles", [])
-        if home_styles or away_styles:
-            kg_text = f"""
-TACTICAL ANALYSIS:
-Home styles: {', '.join(home_styles) if home_styles else 'Unknown'}
-Away styles: {', '.join(away_styles) if away_styles else 'Unknown'}
-Matchup: {kg.get('matchup_summary', 'N/A')}"""
+    home_styles = kg.get("home_styles", []) if kg else []
+    away_styles = kg.get("away_styles", []) if kg else []
+    matchup_summary = kg.get('matchup_summary', 'No clear tactical advantage') if kg else 'No data'
+    kg_confidence = kg.get('confidence', 'none') if kg else 'none'
 
-    # Format web context
-    web_text = web.get("all_content", "No web context available.")[:1000] if web else "Web search skipped."
+    # Format web context (truncate for prompt size)
+    web_text = web.get("all_content", "No web context available.")[:800] if web else "Web search skipped."
 
-    # Format form strings
+    # Format form strings with safe defaults
     home_ppg = home_form.get('points_per_game', 0) or 0
     away_ppg = away_form.get('points_per_game', 0) or 0
+    home_wins = home_form.get('wins', 0) or 0
+    home_draws = home_form.get('draws', 0) or 0
+    home_losses = home_form.get('losses', 0) or 0
+    away_wins = away_form.get('wins', 0) or 0
+    away_draws = away_form.get('draws', 0) or 0
+    away_losses = away_form.get('losses', 0) or 0
+    home_gs = home_form.get('goals_scored', 0) or 0
+    home_gc = home_form.get('goals_conceded', 0) or 0
+    away_gs = away_form.get('goals_scored', 0) or 0
+    away_gc = away_form.get('goals_conceded', 0) or 0
 
-    return f"""Predict this football match:
+    # Format H2H with safe defaults
+    h2h_played = h2h.get('matches_played', 0) or 0
+    h2h_t1_wins = h2h.get('team1_wins', 0) or 0
+    h2h_t2_wins = h2h.get('team2_wins', 0) or 0
+    h2h_draws = h2h.get('draws', 0) or 0
+    h2h_results = h2h.get('recent_results', [])
+    h2h_t1_goals = h2h.get('avg_goals_team1', 0) or 0
+    h2h_t2_goals = h2h.get('avg_goals_team2', 0) or 0
+    h2h_dominance = h2h.get('dominance', 'no_history') or 'no_history'
+
+    return f"""You are an expert football analyst. Predict the match outcome using this structured 6-step process.
 
 MATCH: {match['home_team']} vs {match['away_team']}
 DATE: {match.get('date', 'Unknown')}
+VENUE: {match['home_team']} (Home)
 
-HOME FORM: {home_form.get('form_string', 'N/A')} ({home_ppg:.2f} PPG)
-AWAY FORM: {away_form.get('form_string', 'N/A')} ({away_ppg:.2f} PPG)
+================================================================================
+ANALYZE EACH STEP SYSTEMATICALLY:
+================================================================================
 
-BASELINE: H={baseline['home_prob']:.1%}, D={baseline['draw_prob']:.1%}, A={baseline['away_prob']:.1%}
-{kg_text}
+STEP 1 - RECENT FORM ANALYSIS
+------------------------------
+Home Team ({match['home_team']}) - Last 5 Matches:
+- Record: {home_wins}W-{home_draws}D-{home_losses}L
+- Points per game: {home_ppg:.2f}
+- Goals: {home_gs} scored, {home_gc} conceded
+- Form string: {home_form.get('form_string', 'N/A')}
 
-WEB CONTEXT:
+Away Team ({match['away_team']}) - Last 5 Matches:
+- Record: {away_wins}W-{away_draws}D-{away_losses}L
+- Points per game: {away_ppg:.2f}
+- Goals: {away_gs} scored, {away_gc} conceded
+- Form string: {away_form.get('form_string', 'N/A')}
+
+STEP 2 - ADVANCED STATISTICS
+-----------------------------
+{match['home_team']} Stats:
+- Attacking: {home_att.get('avg_shots', 0):.1f} shots/game, {home_att.get('avg_goals', 0):.2f} goals/game
+- Defensive: {home_def.get('avg_goals_conceded', 0):.2f} conceded/game, {home_def.get('clean_sheet_rate', 0):.0%} clean sheets
+- Efficiency: {home_eff.get('conversion_rate', 0):.1f}% conversion, {home_eff.get('attacking_threat', 0):.1f}/10 threat
+
+{match['away_team']} Stats:
+- Attacking: {away_att.get('avg_shots', 0):.1f} shots/game, {away_att.get('avg_goals', 0):.2f} goals/game
+- Defensive: {away_def.get('avg_goals_conceded', 0):.2f} conceded/game, {away_def.get('clean_sheet_rate', 0):.0%} clean sheets
+- Efficiency: {away_eff.get('conversion_rate', 0):.1f}% conversion, {away_eff.get('attacking_threat', 0):.1f}/10 threat
+
+STEP 3 - TACTICAL MATCHUP
+--------------------------
+- {match['home_team']} style: {', '.join(home_styles) if home_styles else 'Unknown'}
+- {match['away_team']} style: {', '.join(away_styles) if away_styles else 'Unknown'}
+- Matchup analysis: {matchup_summary}
+- Tactical confidence: {kg_confidence.upper()}
+
+STEP 4 - HEAD-TO-HEAD HISTORY
+------------------------------
+Recent H2H ({h2h_played} meetings):
+- {match['home_team']} wins: {h2h_t1_wins}
+- {match['away_team']} wins: {h2h_t2_wins}
+- Draws: {h2h_draws}
+- Recent results: {', '.join(h2h_results[:3]) if h2h_results else 'No recent meetings'}
+- Average goals: {match['home_team']} {h2h_t1_goals:.1f}, {match['away_team']} {h2h_t2_goals:.1f}
+- Pattern: {h2h_dominance.upper()}
+
+STEP 5 - CURRENT CONTEXT
+-------------------------
 {web_text}
+
+STEP 6 - BASELINE COMPARISON
+-----------------------------
+Bookmaker probabilities:
+- Home win: {baseline['home_prob']:.1%}
+- Draw: {baseline['draw_prob']:.1%}
+- Away win: {baseline['away_prob']:.1%}
+
+Consider: Does your analysis support or contradict the bookmakers?
+
+================================================================================
+FINAL PREDICTION
+================================================================================
+Based on your 6-step analysis, provide your prediction.
 
 Respond EXACTLY in this format:
 PROBABILITIES: H=XX%, D=XX%, A=XX%
-REASONING: [Your analysis in 2-3 sentences]
+REASONING: [2-3 sentences synthesizing your key findings]
 CONFIDENCE: HIGH/MEDIUM/LOW"""
 
 
@@ -365,12 +466,14 @@ def create_workflow_components(
     # =========================================================================
     async def stats_collector_node(state: PredictionState) -> PredictionState:
         """
-        Gather statistics: team form and baseline probabilities.
+        Gather statistics: team form, baseline probabilities, advanced stats, and H2H.
 
         Actions:
         - Call get_team_form for home team (5 matches)
         - Call get_team_form for away team (5 matches)
         - Call get_baseline_probs for bookmaker odds
+        - Calculate advanced stats for both teams
+        - Calculate head-to-head statistics
         """
         verbose = state.get("verbose", True)
 
@@ -407,10 +510,47 @@ def create_workflow_components(
                 print(f"   Away form: {away_str}")
                 print(f"   Baseline: H={baseline['home_prob']:.1%}, D={baseline['draw_prob']:.1%}, A={baseline['away_prob']:.1%}")
 
+            # Calculate advanced statistics
+            if verbose:
+                print("   Calculating advanced stats...")
+
+            stats_calc = AdvancedStatsCalculator(str(db_path))
+
+            # Get advanced stats for both teams (before this match date)
+            match_date = match.get('date')
+            home_advanced = stats_calc.get_team_advanced_stats(
+                match["home_team"],
+                last_n=5,
+                before_date=match_date
+            )
+            away_advanced = stats_calc.get_team_advanced_stats(
+                match["away_team"],
+                last_n=5,
+                before_date=match_date
+            )
+
+            # Get head-to-head statistics
+            h2h_stats = stats_calc.get_head_to_head_stats(
+                match["home_team"],
+                match["away_team"],
+                last_n=5,
+                before_date=match_date
+            )
+
+            if verbose:
+                home_threat = home_advanced.get('efficiency', {}).get('attacking_threat', 0)
+                away_threat = away_advanced.get('efficiency', {}).get('attacking_threat', 0)
+                print(f"   Home attacking threat: {home_threat:.1f}/10")
+                print(f"   Away attacking threat: {away_threat:.1f}/10")
+                print(f"   H2H: {h2h_stats.get('matches_played', 0)} meetings, dominance: {h2h_stats.get('dominance', 'N/A')}")
+
             return {
                 "home_form": home_form,
                 "away_form": away_form,
-                "baseline": baseline
+                "baseline": baseline,
+                "home_advanced_stats": home_advanced,
+                "away_advanced_stats": away_advanced,
+                "h2h_stats": h2h_stats
             }
 
         except Exception as e:
