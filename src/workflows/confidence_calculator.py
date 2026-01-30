@@ -68,6 +68,9 @@ class ConfidenceCalculator:
         High spread (e.g., 80%, 12%, 8%) → confident
         Low spread (e.g., 40%, 35%, 25%) → uncertain
 
+        PENALTY: If max_prob > 65% but draw_prob < 20%, score capped at 0.5
+        This prevents overconfidence when predicting extreme outcomes.
+
         Returns: 0.0 to 1.0
         """
         probs = [
@@ -77,15 +80,25 @@ class ConfidenceCalculator:
         ]
 
         max_prob = max(probs)
+        draw_prob = prediction.get('draw_prob', 0.33)
 
+        # Base score calculation
         if max_prob > 0.70:
-            return 1.0  # Very confident
+            score = 1.0  # Very confident
         elif max_prob > 0.60:
-            return 0.7  # Moderately confident
+            score = 0.7  # Moderately confident
         elif max_prob > 0.50:
-            return 0.4  # Somewhat confident
+            score = 0.4  # Somewhat confident
         else:
-            return 0.0  # Not confident
+            score = 0.0  # Not confident
+
+        # PENALTY: Extreme predictions with low draw probability
+        # Draws happen ~25% of the time - if predicting <20% draw with high
+        # confidence in home/away, reduce score (likely overconfident)
+        if max_prob > 0.65 and draw_prob < 0.20:
+            score = min(score, 0.5)  # Cap at moderate confidence
+
+        return score
 
     def _score_baseline_agreement(self, prediction: Dict, baseline: Dict) -> float:
         """
@@ -203,9 +216,11 @@ class ConfidenceCalculator:
             total_score = total_score / total_weight * sum(weights.values())
 
         # Convert to confidence level
-        if total_score >= 0.65:
+        # TIGHTENED THRESHOLDS: Previously 0.65/0.35, now 0.75/0.45
+        # This reduces overconfidence by requiring higher scores for 'high'
+        if total_score >= 0.75:
             return 'high'
-        elif total_score >= 0.35:
+        elif total_score >= 0.45:
             return 'medium'
         else:
             return 'low'

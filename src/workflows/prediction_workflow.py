@@ -39,6 +39,7 @@ from langgraph.graph import StateGraph, END
 
 # Local imports
 from .confidence_calculator import ConfidenceCalculator
+from .draw_detector import DrawDetector
 from src.data.advanced_stats import AdvancedStatsCalculator
 
 # Setup logging
@@ -182,7 +183,20 @@ def _build_prediction_prompt(state: PredictionState) -> str:
     h2h_t2_goals = h2h.get('avg_goals_team2', 0) or 0
     h2h_dominance = h2h.get('dominance', 'no_history') or 'no_history'
 
-    return f"""You are an expert football analyst. Predict the match outcome using this structured 6-step process.
+    # Draw detection - check if this match has high draw likelihood
+    draw_detector = DrawDetector()
+    draw_likelihood = draw_detector.detect_draw_likelihood(
+        home_form=home_form,
+        away_form=away_form,
+        baseline=baseline,
+        h2h_stats=h2h,
+        advanced_stats_home=home_adv,
+        advanced_stats_away=away_adv
+    )
+    draw_warning = draw_detector.get_draw_warning(draw_likelihood)
+    draw_warning_text = f"\n{draw_warning}\n" if draw_warning else ""
+
+    return f"""You are an expert football analyst.{draw_warning_text} Predict the match outcome using this structured 6-step process.
 
 MATCH: {match['home_team']} vs {match['away_team']}
 DATE: {match.get('date', 'Unknown')}
@@ -248,9 +262,19 @@ Bookmaker probabilities:
 
 Consider: Does your analysis support or contradict the bookmakers?
 
+DRAW CONSIDERATION:
+Draws occur in ~25% of Premier League matches. Consider draws seriously when:
+• Teams evenly matched (form difference < 0.5 PPG)
+• Both defensive/cautious (low goals per game)
+• Close baseline probabilities (no clear favorite >55%)
+• Historical draws between these teams
+
 ================================================================================
 FINAL PREDICTION
 ================================================================================
+⚠️ UNCERTAINTY REMINDER: Avoid overconfidence. Draws happen 1 in 4 matches.
+If no team dominates across ALL factors, draw probability should be 25-35%.
+
 Based on your 6-step analysis, provide your prediction.
 
 Respond EXACTLY in this format:
