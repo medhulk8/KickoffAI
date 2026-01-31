@@ -92,3 +92,6 @@ test_results/
 # MCP Server logs
 mcp_server.log
 
+# Claude Code CLI metadata
+.claude/
+
