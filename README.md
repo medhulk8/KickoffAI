@@ -62,15 +62,23 @@ export TAVILY_API_KEY="your_tavily_api_key"
 
 ### Basic Usage
 
-```python
-# Run single prediction
-python -m src.main --match-id 100
+#### 🌐 Web Interface (Recommended)
 
+```bash
+# Launch Streamlit app
+streamlit run app.py
+
+# Opens in browser at http://localhost:8501
+```
+
+#### 💻 Command Line Interface
+
+```python
 # Run batch evaluation
 python -m src.evaluation.batch_evaluator
 
-# Run comprehensive test
-python scripts/run_evaluation.py
+# Test specific matches
+python -m src.agent.hybrid_agent
 ```
 
 ---
