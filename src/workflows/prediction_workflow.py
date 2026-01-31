@@ -276,11 +276,26 @@ FINAL PREDICTION
 ⚠️ UNCERTAINTY REMINDER: Avoid overconfidence. Draws happen 1 in 4 matches.
 If no team dominates across ALL factors, draw probability should be 25-35%.
 
-Based on your 6-step analysis, provide your prediction.
+Based on your 6-step analysis, provide your prediction with DETAILED analysis.
 
 Respond EXACTLY in this format:
 PROBABILITIES: H=XX%, D=XX%, A=XX%
-REASONING: [2-3 sentences synthesizing your key findings]
+
+REASONING:
+Write a comprehensive 4-6 paragraph analysis covering:
+
+**Form Analysis:** Detail recent performance trends for both teams. Include win/loss records, scoring patterns, defensive solidity, and momentum. Explain which team has better current form and why this matters.
+
+**Statistical Edge:** Compare key stats - shots, conversion rates, defensive records, clean sheets. Identify which team has statistical advantages and quantify the gap. Explain how these numbers translate to match outcome.
+
+**Tactical Matchup:** Analyze the clash of playing styles. How will each team's tactical approach work against the opponent? What are the key battles (e.g., possession vs counter-attack, high press vs deep block)? Which style is likely to dominate and why?
+
+**Historical Context:** Review head-to-head patterns and historical dominance. Are there psychological factors? Does one team consistently perform better in this fixture? How reliable is this historical trend?
+
+**Critical Factors:** Identify 2-3 decisive factors that will determine the outcome. These could be: key player matchups, home advantage effectiveness, defensive vulnerabilities, injury impacts, or current context from news.
+
+**Final Synthesis:** Bring it all together - why are you picking this specific probability distribution? What's the single most important reason for your prediction? Address any conflicting signals in the data.
+
 CONFIDENCE: HIGH/MEDIUM/LOW"""
 
 
@@ -382,21 +397,28 @@ def _parse_prediction_response(response_text: str, baseline: dict) -> dict:
         draw_prob /= total
         away_prob /= total
 
-    # Extract reasoning
+    # Extract reasoning (multi-paragraph support)
     reasoning = ""
     reasoning_patterns = [
-        r'REASONING:?\s*(.+?)(?:CONFIDENCE|$)',
-        r'Analysis:?\s*(.+?)(?:CONFIDENCE|PROBABILITIES|$)',
-        r'(?:My |The )?(?:analysis|reasoning|prediction)[:\s]+(.+?)(?:CONFIDENCE|PROBABILITIES|$)',
+        r'REASONING:?\s*(.+?)(?:\n\s*CONFIDENCE|$)',
+        r'Analysis:?\s*(.+?)(?:\n\s*CONFIDENCE|PROBABILITIES|$)',
+        r'(?:My |The )?(?:analysis|reasoning|prediction)[:\s]+(.+?)(?:\n\s*CONFIDENCE|PROBABILITIES|$)',
     ]
     for pattern in reasoning_patterns:
         match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
         if match:
             reasoning = match.group(1).strip()
+            # Clean up any leading newlines or excessive whitespace
+            reasoning = re.sub(r'\n{3,}', '\n\n', reasoning)
             break
 
     if not reasoning:
-        reasoning = response_text[:500].strip()
+        # Fallback: extract everything between PROBABILITIES and CONFIDENCE
+        fallback = re.search(r'PROBABILITIES:.*?\n(.+?)CONFIDENCE:', response_text, re.DOTALL | re.IGNORECASE)
+        if fallback:
+            reasoning = fallback.group(1).strip()
+        else:
+            reasoning = response_text[:1000].strip()
 
     # Extract confidence
     conf_match = re.search(r'CONFIDENCE:?\s*(HIGH|MEDIUM|LOW)', response_text, re.IGNORECASE)
@@ -743,7 +765,7 @@ def create_workflow_components(
                 response = ollama.chat(
                     model=ollama_model,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.3, "num_predict": 500}
+                    options={"temperature": 0.3, "num_predict": 2000}  # Increased for detailed analysis
                 )
                 response_text = response["message"]["content"]
                 prediction = _parse_prediction_response(response_text, state["baseline"])

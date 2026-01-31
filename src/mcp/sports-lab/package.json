@@ -1,7 +1,7 @@
 {
   "name": "sports-lab",
   "version": "1.0.0",
-  "description": "MCP server for ASIL football prediction project",
+  "description": "MCP server for KickoffAI football prediction project",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

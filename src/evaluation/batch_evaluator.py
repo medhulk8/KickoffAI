@@ -531,7 +531,7 @@ async def run_batch_evaluation(
 
     print("=" * 70)
     mode = "Ensemble" if use_ensemble else "Single Model"
-    print(f" ASIL BATCH EVALUATION (LangGraph Workflow - {mode})")
+    print(f" KickoffAI BATCH EVALUATION (LangGraph Workflow - {mode})")
     print("=" * 70)
 
     # Check Tavily API key (optional - web search disabled by default)

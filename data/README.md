@@ -1,6 +1,6 @@
 # Data Directory
 
-This directory contains all data files for the ASIL project.
+This directory contains all data files for the KickoffAI project.
 
 ## Structure
 

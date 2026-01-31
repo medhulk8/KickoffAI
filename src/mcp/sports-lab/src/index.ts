@@ -1,8 +1,8 @@
 /**
- * ASIL Sports Lab MCP Server
+ * KickoffAI Sports Lab MCP Server
  *
  * Model Context Protocol server providing tools for football match
- * prediction and evaluation. Connects to the ASIL SQLite database
+ * prediction and evaluation. Connects to the KickoffAI SQLite database
  * to retrieve match data, log predictions, and evaluate results.
  *
  * Tools:

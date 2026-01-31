@@ -1,5 +1,5 @@
 """
-ASIL Prediction Agent
+KickoffAI Prediction Agent
 
 Main agent class that orchestrates football match predictions using
 the prompt-chaining approach. This agent replaces the simple_agent
@@ -106,7 +106,7 @@ from src.agent.error_classifier import classify_error, generate_critique
 
 class Agent:
     """
-    ASIL Prediction Agent using prompt-chaining approach.
+    KickoffAI Prediction Agent using prompt-chaining approach.
 
     This agent coordinates the full prediction workflow:
     1. Gather context (match info, team form, league stats)
@@ -418,7 +418,7 @@ async def main():
     3. Error analysis across all predictions
     """
     print("=" * 70)
-    print(" ASIL PREDICTION AGENT - DEMO")
+    print(" KickoffAI PREDICTION AGENT - DEMO")
     print("=" * 70)
     print(f"\nMCP Server: {MCP_SERVER_PATH}")
     print(f"Database: {DEFAULT_DB_PATH}")

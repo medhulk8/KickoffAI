@@ -1,4 +1,4 @@
-# ASIL: Advanced Sports Intelligence & Learning
+# KickoffAI: Football Match Prediction Engine
 
 **AI-Powered Football Match Prediction System with Knowledge Graph & LLM Integration**
 
@@ -10,7 +10,7 @@
 
 ## 🎯 Overview
 
-ASIL is a sophisticated football match prediction system that combines:
+KickoffAI is a sophisticated football match prediction system that combines:
 - **Dynamic Knowledge Graph** for tactical pattern recognition
 - **Local LLMs** (via Ollama) for intelligent analysis
 - **Web Search RAG** (disabled by default - degrades accuracy)
@@ -188,7 +188,7 @@ asil_project/
 
 ### Latest Results (99 matches)
 
-| Metric | Baseline | ASIL | Improvement |
+| Metric | Baseline | KickoffAI | Improvement |
 |--------|----------|------|-------------|
 | **Overall Accuracy** | 58.6% | 56.6% | -2.0% |
 | **Draw Accuracy** | 0.0% | **33.3%** | **+33.3%** ✅ |
@@ -196,7 +196,7 @@ asil_project/
 | **Away Win Accuracy** | 63.0% | 51.9% | -11.1% |
 | **High Conf Accuracy** | - | **75.0%** | ✅ |
 
-**Key Insight:** ASIL trades some home/away accuracy to correctly predict draws (which baseline completely misses). For betting/high-stakes scenarios, this is more valuable.
+**Key Insight:** KickoffAI trades some home/away accuracy to correctly predict draws (which baseline completely misses). For betting/high-stakes scenarios, this is more valuable.
 
 ---
 
