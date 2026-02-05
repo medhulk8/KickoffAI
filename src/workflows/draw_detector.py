@@ -33,15 +33,18 @@ class DrawDetector:
         baseline: Dict,
         h2h_stats: Optional[Dict] = None,
         advanced_stats_home: Optional[Dict] = None,
-        advanced_stats_away: Optional[Dict] = None
+        advanced_stats_away: Optional[Dict] = None,
+        home_weighted_form: Optional[Dict] = None,
+        away_weighted_form: Optional[Dict] = None,
+        form_comparison: Optional[Dict] = None
     ) -> float:
         """
         Calculate objective draw likelihood (0.0-1.0).
 
         High score = match likely to be a draw.
 
-        Phase 5 enhancement: More generous scoring to catch more draws.
-        Previous max was ~1.0, now can reach 1.2+ (capped at 1.0).
+        Phase 6 enhancement: Uses recency-weighted metrics for better accuracy.
+        Incorporates weighted PPG, momentum scores, and form comparison.
 
         Args:
             home_form: dict with 'points_per_game', 'goals_scored', etc.
@@ -50,14 +53,21 @@ class DrawDetector:
             h2h_stats: dict with 'matches_played', 'draws', etc.
             advanced_stats_home: dict with shots, corners, clean_sheets
             advanced_stats_away: dict with shots, corners, clean_sheets
+            home_weighted_form: dict with weighted_points_per_game, momentum_score
+            away_weighted_form: dict with weighted_points_per_game, momentum_score
+            form_comparison: dict with ppg_differential, form_advantage
 
         Returns:
             float between 0.0 and 1.0
         """
         score = 0.0
 
-        # Factor 1: Even form (0.35 points max, was 0.3)
-        score += self._score_even_form(home_form, away_form)
+        # Factor 1: Even form (0.35 points max) - use weighted metrics if available
+        score += self._score_even_form(
+            home_form, away_form,
+            home_weighted_form, away_weighted_form,
+            form_comparison
+        )
 
         # Factor 2: Close baseline (0.35 points max, was 0.3)
         score += self._score_close_baseline(baseline)
@@ -69,30 +79,58 @@ class DrawDetector:
         if h2h_stats:
             score += self._score_h2h_draws(h2h_stats)
 
-        # Note: Max possible is now 1.1 (0.35 + 0.35 + 0.2 + 0.2)
+        # Factor 5: Momentum similarity (0.15 points max) - NEW in Phase 6
+        if home_weighted_form and away_weighted_form:
+            score += self._score_momentum_similarity(home_weighted_form, away_weighted_form)
+
+        # Note: Max possible is now 1.25 (0.35 + 0.35 + 0.2 + 0.2 + 0.15)
         # This makes it easier to reach high draw likelihood
         return min(score, 1.0)
 
-    def _score_even_form(self, home_form: Dict, away_form: Dict) -> float:
+    def _score_even_form(
+        self,
+        home_form: Dict,
+        away_form: Dict,
+        home_weighted_form: Optional[Dict] = None,
+        away_weighted_form: Optional[Dict] = None,
+        form_comparison: Optional[Dict] = None
+    ) -> float:
         """
         Score based on how evenly matched the teams are.
 
-        Phase 5 fix: More aggressive thresholds (was too conservative).
-        Draws occur in ~25% of matches, but we're only predicting 12.5%.
+        Phase 6 enhancement: Uses weighted PPG (recency-weighted) when available.
+        If form_comparison is provided, uses its classification directly.
 
-        Returns: 0.0 to 0.35 (increased from 0.3)
+        Returns: 0.0 to 0.35
         """
-        home_ppg = home_form.get('points_per_game', 1.5)
-        away_ppg = away_form.get('points_per_game', 1.5)
+        # Use form comparison classification if available (most accurate)
+        if form_comparison:
+            advantage = form_comparison.get('form_advantage', 'unknown')
+            if advantage == 'even':
+                return 0.35  # Very even match
+            elif advantage in ['home_slight', 'away_slight']:
+                return 0.20  # Slight advantage
+            elif advantage in ['home', 'away']:
+                return 0.05  # Clear advantage (but not dominant)
+            # If 'unknown', fall through to manual calculation
+
+        # Use weighted PPG if available (better than traditional PPG)
+        if home_weighted_form and away_weighted_form:
+            home_ppg = home_weighted_form.get('weighted_points_per_game', 1.5)
+            away_ppg = away_weighted_form.get('weighted_points_per_game', 1.5)
+        else:
+            # Fallback to traditional PPG
+            home_ppg = home_form.get('points_per_game', 1.5)
+            away_ppg = away_form.get('points_per_game', 1.5)
 
         form_diff = abs(home_ppg - away_ppg)
 
         # More aggressive thresholds to catch more potential draws
-        if form_diff < 0.4:  # Was 0.3
-            return 0.35  # Very even (increased from 0.3)
-        elif form_diff < 0.8:  # Was 0.6
-            return 0.20  # Somewhat even (increased from 0.15)
-        elif form_diff < 1.2:  # New tier
+        if form_diff < 0.4:
+            return 0.35  # Very even
+        elif form_diff < 0.8:
+            return 0.20  # Somewhat even
+        elif form_diff < 1.2:
             return 0.10  # Moderately matched
         else:
             return 0.0  # Clear favorite
@@ -190,6 +228,34 @@ class DrawDetector:
             return 0.1  # Above average draw rate
         else:
             return 0.0  # Normal/low draw rate
+
+    def _score_momentum_similarity(
+        self,
+        home_weighted: Dict,
+        away_weighted: Dict
+    ) -> float:
+        """
+        Score based on momentum similarity between teams.
+
+        When both teams have similar momentum (both gaining or both losing),
+        draws are more likely as neither has a psychological edge.
+
+        Returns: 0.0 to 0.15
+        """
+        home_momentum = home_weighted.get('momentum_score', 0)
+        away_momentum = away_weighted.get('momentum_score', 0)
+
+        momentum_diff = abs(home_momentum - away_momentum)
+
+        # Similar momentum = more draw likely
+        if momentum_diff < 0.5:
+            return 0.15  # Very similar momentum
+        elif momentum_diff < 1.0:
+            return 0.08  # Somewhat similar
+        elif momentum_diff < 1.5:
+            return 0.03  # Slight difference
+        else:
+            return 0.0  # Clear momentum advantage
 
     def enforce_minimum_draw(
         self,

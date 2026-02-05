@@ -1,5 +1,5 @@
 """
-Confidence Calculator for ASIL Predictions
+Confidence Calculator for KickoffAI Predictions
 
 Calculate prediction confidence based on objective criteria
 instead of trusting LLM self-assessment.
@@ -9,6 +9,7 @@ Factors considered:
 2. Baseline Agreement - Do we agree with bookmakers?
 3. KG Clarity - Do we have clear tactical insights?
 4. Data Availability - Do we have enough information?
+5. Form Strength (Phase 6) - Momentum and form dynamics
 """
 
 from typing import Dict, List, Tuple
@@ -28,9 +29,12 @@ class ConfidenceCalculator:
         """
         Calculate confidence level based on multiple factors.
 
+        Phase 6 enhancement: Now considers momentum and form strength.
+
         Args:
             prediction: dict with home_prob, draw_prob, away_prob
-            context: dict with baseline, kg_insights, web_context
+            context: dict with baseline, kg_insights, web_context,
+                    home_weighted_form, away_weighted_form, form_comparison
 
         Returns:
             'high', 'medium', or 'low'
@@ -55,6 +59,14 @@ class ConfidenceCalculator:
         # Factor 4: Data Availability (do we have enough information?)
         data_score = self._score_data_availability(context)
         scores.append(('data_availability', data_score))
+
+        # Factor 5: Form Strength (NEW - Phase 6: momentum and form dynamics)
+        home_weighted = context.get('home_weighted_form', {})
+        away_weighted = context.get('away_weighted_form', {})
+        form_comp = context.get('form_comparison', {})
+        if home_weighted and away_weighted:
+            form_score = self._score_form_strength(home_weighted, away_weighted, form_comp)
+            scores.append(('form_strength', form_score))
 
         # Combine scores
         final_confidence = self._combine_scores(scores)
@@ -185,9 +197,60 @@ class ConfidenceCalculator:
 
         return score
 
+    def _score_form_strength(
+        self,
+        home_weighted: Dict,
+        away_weighted: Dict,
+        form_comp: Dict
+    ) -> float:
+        """
+        Score based on momentum and form dynamics (Phase 6).
+
+        Clear momentum advantage → more confident
+        Similar momentum → less confident (draw likely)
+        Strong form differential → more confident
+
+        Returns: 0.0 to 1.0
+        """
+        score = 0.0
+
+        # Factor 1: Momentum differential (0.5 points)
+        home_momentum = home_weighted.get('momentum_score', 0)
+        away_momentum = away_weighted.get('momentum_score', 0)
+        momentum_diff = abs(home_momentum - away_momentum)
+
+        if momentum_diff >= 2.0:
+            score += 0.5  # Clear momentum advantage (e.g., 3.0 vs 0.5)
+        elif momentum_diff >= 1.5:
+            score += 0.35  # Strong momentum advantage
+        elif momentum_diff >= 1.0:
+            score += 0.20  # Moderate momentum advantage
+        elif momentum_diff >= 0.5:
+            score += 0.10  # Slight momentum advantage
+        else:
+            score += 0.0  # Similar momentum (uncertain)
+
+        # Factor 2: Form advantage clarity (0.5 points)
+        if form_comp:
+            advantage = form_comp.get('form_advantage', 'even')
+            ppg_diff = abs(form_comp.get('ppg_differential', 0))
+
+            if advantage in ['home', 'away'] and ppg_diff > 0.8:
+                score += 0.5  # Clear form advantage
+            elif advantage in ['home', 'away']:
+                score += 0.35  # Moderate form advantage
+            elif advantage in ['home_slight', 'away_slight']:
+                score += 0.15  # Slight form advantage
+            else:  # even
+                score += 0.0  # Even form (uncertain)
+
+        return score
+
     def _combine_scores(self, scores: List[Tuple[str, float]]) -> str:
         """
         Combine individual scores into final confidence level.
+
+        Phase 6: Updated weights to include form_strength factor.
 
         Args:
             scores: List of (name, score) tuples
@@ -195,19 +258,20 @@ class ConfidenceCalculator:
         Returns:
             'high', 'medium', or 'low'
         """
-        # Weighted average
+        # Weighted average (adjusted in Phase 6)
         weights = {
-            'probability_spread': 0.35,  # Most important
-            'baseline_agreement': 0.30,  # Second most
-            'kg_clarity': 0.20,
-            'data_availability': 0.15
+            'probability_spread': 0.30,  # Still most important (reduced from 0.35)
+            'baseline_agreement': 0.25,  # Second most (reduced from 0.30)
+            'form_strength': 0.20,       # NEW - Phase 6: momentum & form
+            'kg_clarity': 0.15,          # Reduced from 0.20
+            'data_availability': 0.10    # Reduced from 0.15
         }
 
         total_score = 0.0
         total_weight = 0.0
 
         for name, score in scores:
-            weight = weights.get(name, 0.25)
+            weight = weights.get(name, 0.20)
             total_score += score * weight
             total_weight += weight
 
@@ -234,6 +298,8 @@ class ConfidenceCalculator:
         Get detailed breakdown of confidence calculation.
         (for debugging/analysis)
 
+        Phase 6: Includes form_strength factor.
+
         Returns:
             dict with individual scores and final confidence
         """
@@ -247,6 +313,14 @@ class ConfidenceCalculator:
 
         data_score = self._score_data_availability(context)
 
+        # Phase 6: Add form strength
+        home_weighted = context.get('home_weighted_form', {})
+        away_weighted = context.get('away_weighted_form', {})
+        form_comp = context.get('form_comparison', {})
+        form_score = 0.0
+        if home_weighted and away_weighted:
+            form_score = self._score_form_strength(home_weighted, away_weighted, form_comp)
+
         scores = [
             ('probability_spread', prob_score),
             ('baseline_agreement', baseline_score),
@@ -254,9 +328,13 @@ class ConfidenceCalculator:
             ('data_availability', data_score)
         ]
 
+        # Add form strength if available
+        if home_weighted and away_weighted:
+            scores.append(('form_strength', form_score))
+
         final_confidence = self._combine_scores(scores)
 
-        return {
+        result = {
             'confidence': final_confidence,
             'scores': {
                 'probability_spread': prob_score,
@@ -266,6 +344,12 @@ class ConfidenceCalculator:
             },
             'total_score': sum(s[1] for s in scores) / len(scores)
         }
+
+        # Include form_strength in scores if available
+        if home_weighted and away_weighted:
+            result['scores']['form_strength'] = form_score
+
+        return result
 
 
 def test_confidence_calculator():

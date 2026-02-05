@@ -147,6 +147,11 @@ class BatchEvaluator:
         # Compute web searches performed first (used to infer if skipped)
         web_searches_performed = len(web_context.get('results', {})) if isinstance(web_context, dict) else 0
 
+        # Extract weighted form data
+        home_weighted = result.get('home_weighted_form', {})
+        away_weighted = result.get('away_weighted_form', {})
+        form_comp = result.get('form_comparison', {})
+
         metrics = {
             "match_id": result.get('match_id'),
             "home_team": match.get('home_team', 'Unknown'),
@@ -176,6 +181,11 @@ class BatchEvaluator:
 
             # KG insights
             "has_kg_insights": bool(result.get('kg_insights') and not result.get('kg_insights', {}).get('error')),
+
+            # Weighted form data (recency-weighted metrics)
+            "home_weighted_form": home_weighted,
+            "away_weighted_form": away_weighted,
+            "form_comparison": form_comp,
         }
 
         # Evaluation metrics (if match completed)

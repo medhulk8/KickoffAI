@@ -93,6 +93,11 @@ class PredictionState(TypedDict, total=False):
     away_advanced_stats: Dict[str, Any]
     h2h_stats: Dict[str, Any]
 
+    # Weighted form stats (populated by stats_collector node)
+    home_weighted_form: Dict[str, Any]
+    away_weighted_form: Dict[str, Any]
+    form_comparison: Dict[str, Any]
+
     # Context gathering (populated by respective nodes)
     kg_insights: Dict[str, Any]
     web_context: Dict[str, Any]
@@ -142,6 +147,11 @@ def _build_prediction_prompt(state: PredictionState) -> str:
     away_adv = state.get("away_advanced_stats", {})
     h2h = state.get("h2h_stats", {})
 
+    # Get weighted form data (recency-weighted metrics)
+    home_weighted = state.get("home_weighted_form", {})
+    away_weighted = state.get("away_weighted_form", {})
+    form_comp = state.get("form_comparison", {})
+
     # Extract nested stats with safe defaults
     home_att = home_adv.get('attacking', {})
     home_def = home_adv.get('defensive', {})
@@ -185,6 +195,7 @@ def _build_prediction_prompt(state: PredictionState) -> str:
     h2h_dominance = h2h.get('dominance', 'no_history') or 'no_history'
 
     # Draw detection - check if this match has high draw likelihood
+    # Phase 6: Now uses weighted metrics for better accuracy
     draw_detector = DrawDetector()
     draw_likelihood = draw_detector.detect_draw_likelihood(
         home_form=home_form,
@@ -192,7 +203,10 @@ def _build_prediction_prompt(state: PredictionState) -> str:
         baseline=baseline,
         h2h_stats=h2h,
         advanced_stats_home=home_adv,
-        advanced_stats_away=away_adv
+        advanced_stats_away=away_adv,
+        home_weighted_form=home_weighted,
+        away_weighted_form=away_weighted,
+        form_comparison=form_comp
     )
     draw_warning = draw_detector.get_draw_warning(draw_likelihood)
     draw_warning_text = f"\n{draw_warning}\n" if draw_warning else ""
@@ -207,19 +221,31 @@ VENUE: {match['home_team']} (Home)
 ANALYZE EACH STEP SYSTEMATICALLY:
 ================================================================================
 
-STEP 1 - RECENT FORM ANALYSIS
-------------------------------
+STEP 1 - RECENT FORM ANALYSIS (with Recency Weighting)
+-------------------------------------------------------
 Home Team ({match['home_team']}) - Last 5 Matches:
 - Record: {home_wins}W-{home_draws}D-{home_losses}L
-- Points per game: {home_ppg:.2f}
+- Traditional PPG: {home_ppg:.2f}
+- Weighted PPG: {home_weighted.get('weighted_points_per_game', 0):.2f} (recent matches weighted higher)
 - Goals: {home_gs} scored, {home_gc} conceded
+- Weighted Goals/Game: {home_weighted.get('weighted_goals_per_game', 0):.2f} scored, {home_weighted.get('weighted_goals_conceded', 0):.2f} conceded
+- Momentum Score: {home_weighted.get('momentum_score', 0):.1f}/3.0 (based on recent 2 matches)
 - Form string: {home_form.get('form_string', 'N/A')}
 
 Away Team ({match['away_team']}) - Last 5 Matches:
 - Record: {away_wins}W-{away_draws}D-{away_losses}L
-- Points per game: {away_ppg:.2f}
+- Traditional PPG: {away_ppg:.2f}
+- Weighted PPG: {away_weighted.get('weighted_points_per_game', 0):.2f} (recent matches weighted higher)
 - Goals: {away_gs} scored, {away_gc} conceded
+- Weighted Goals/Game: {away_weighted.get('weighted_goals_per_game', 0):.2f} scored, {away_weighted.get('weighted_goals_conceded', 0):.2f} conceded
+- Momentum Score: {away_weighted.get('momentum_score', 0):.1f}/3.0 (based on recent 2 matches)
 - Form string: {away_form.get('form_string', 'N/A')}
+
+Form Comparison:
+- Weighted PPG Differential: {form_comp.get('ppg_differential', 0):+.2f} (positive favors home)
+- Goal Differential: {form_comp.get('goal_differential', 0):+.2f} (positive favors home)
+- Momentum Advantage: {form_comp.get('momentum_advantage', 'even').upper()}
+- Overall Form Advantage: {form_comp.get('form_advantage', 'even').upper()}
 
 STEP 2 - ADVANCED STATISTICS
 -----------------------------
@@ -589,12 +615,34 @@ def create_workflow_components(
                 before_date=match_date
             )
 
+            # Calculate weighted form (recency bias)
+            from src.data.weighted_stats import WeightedStatsCalculator
+            weighted_calc = WeightedStatsCalculator(str(db_path), decay_rate=0.05)
+
+            home_weighted_form = weighted_calc.get_weighted_form(
+                match["home_team"],
+                last_n=5,
+                before_date=match_date
+            )
+            away_weighted_form = weighted_calc.get_weighted_form(
+                match["away_team"],
+                last_n=5,
+                before_date=match_date
+            )
+
+            form_comparison = weighted_calc.compare_form_differential(
+                home_weighted_form,
+                away_weighted_form
+            )
+
             if verbose:
                 home_threat = home_advanced.get('efficiency', {}).get('attacking_threat', 0)
                 away_threat = away_advanced.get('efficiency', {}).get('attacking_threat', 0)
                 print(f"   Home attacking threat: {home_threat:.1f}/10")
                 print(f"   Away attacking threat: {away_threat:.1f}/10")
                 print(f"   H2H: {h2h_stats.get('matches_played', 0)} meetings, dominance: {h2h_stats.get('dominance', 'N/A')}")
+                print(f"   Weighted form: Home {home_weighted_form['weighted_points_per_game']:.2f} vs Away {away_weighted_form['weighted_points_per_game']:.2f} PPG")
+                print(f"   Momentum: Home {home_weighted_form['momentum_score']:.1f}/3 vs Away {away_weighted_form['momentum_score']:.1f}/3")
 
             return {
                 "home_form": home_form,
@@ -603,6 +651,9 @@ def create_workflow_components(
                 "home_advanced_stats": home_advanced,
                 "away_advanced_stats": away_advanced,
                 "h2h_stats": h2h_stats,
+                "home_weighted_form": home_weighted_form,
+                "away_weighted_form": away_weighted_form,
+                "form_comparison": form_comparison,
                 "skip_web_search": state.get("skip_web_search", False)  # Preserve this flag
             }
 
