@@ -27,12 +27,12 @@ Goal: replace LLM predictor node with a trained ML model. Keep everything else.
 bookmaker H/D/A probs, weighted PPG home/away, weighted goals/game home/away, home/away defensive solidity, draw-likelihood score, H2H draw rate
 
 ## Next Session Priority
-**Start here:** Audit feature engineering for leakage.
-- Check `before_date` param is used correctly in `advanced_stats.py`, `weighted_stats.py`, draw detector, H2H queries
-- Confirm `date < ?` (strict less-than, not `<=`)
-- Confirm predicted match excluded from all aggregates
-Then: build supervised training table (one row per match, point-in-time features, label H/D/A).
-Full plan in `ML_PLAN.md`.
+Build backtesting framework (`src/ml/backtest.py`) — time-based splits, metrics (accuracy, log loss, Brier, per-class F1, draw recall). Then train logistic regression baseline.
+Awaiting GPT answers on: class imbalance strategy, split design (2+1 seasons vs rolling), draw_likelihood feature skew concern, defensive solidity variance concern.
+
+## Collaboration Workflow
+At every major implementation step, a prompt is framed for ChatGPT asking for clarifications or review before proceeding. Claude implements, GPT reviews/advises, both work together. User relays responses between them.
 
 ## Session Log
 **2026-04-14** — Planned full ML replacement of LLM predictor. Agreed plan with GPT + Claude review. Decisions locked. Plan saved to `ML_PLAN.md`. No code written yet.
+**2026-04-14** — Leakage audit passed (all stat calls use strict `date < ?`; MCP get_team_form bypassed). Built `src/ml/build_dataset.py`. Generated `data/processed/training_dataset.csv` (941 rows, 11 features + label). Distribution: H=432, D=209, A=300. Pushed to GitHub.
