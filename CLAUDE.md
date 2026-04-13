@@ -1,39 +1,54 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**Phase: Pre-implementation — ML model planned, not yet built.**
-LLM-based prediction system is working. Planning phase complete. Ready to build trained ML model to replace LLM.
+**Phase: ML model trained and ablated. Champion model identified. Next: wire into app.**
+LR model beats bookmakers (65% vs 57.7%, 63% draw recall vs 0%). Feature set locked.
 
 ## What This Project Does
 Predicts Premier League match outcomes (H/D/A) with probabilities.
-Currently uses LangGraph workflow + local LLM (llama3.1:8b via Ollama).
-Goal: replace LLM predictor node with a trained ML model. Keep everything else.
+Goal: replace LLM predictor node in LangGraph with trained ML model. Keep everything else.
 
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
 - LangGraph workflow (`src/workflows/prediction_workflow.py`)
-- Data: 3 seasons PL 2021–24, ~1140 matches, source: football-data.co.uk
+- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py
+- Data: 3 seasons PL 2021–24, 941 training rows, source: football-data.co.uk
 
 ## Locked Architecture Decisions
 - Replace only the LLM predictor node in LangGraph — keep stats collector, draw detector, confidence calculator, logger, Streamlit intact
-- Start with logistic regression, then LightGBM — no neural nets
-- Keep rule-based draw detector as-is; use draw-likelihood score as a feature
+- Champion model: **Logistic Regression** (LightGBM lost on all metrics)
 - Strict time-based splits only — no shuffling
-- Start with 3 seasons; expand to 8–10 only after pipeline validated
-- Equal season weighting to start; recency decay as later ablation
-- Two-stage model (Draw vs Not-Draw → Home vs Away) is challenger only
+- Equal season weighting; recency decay as later ablation
+- Two-stage model is a future challenger, not current priority
+- Confidence threshold: **0.65** (76.8% accuracy on 58% of matches in Fold 2)
 
-## Initial Feature Set (10–12)
-bookmaker H/D/A probs, weighted PPG home/away, weighted goals/game home/away, home/away defensive solidity, draw-likelihood score, H2H draw rate
+## Champion Feature Set (8 features — locked after ablations)
+- bm_home_prob, bm_draw_prob, bm_away_prob
+- h2h_draw_rate
+- home_weighted_ppg, away_weighted_ppg
+- home_weighted_goals, away_weighted_goals
+
+**Dropped:** draw_likelihood (noisy/redundant), def_solidity (zero contribution)
+
+## Champion Model Results (Fold 2, n=194)
+- Accuracy: 65.0% (vs 57.7% bookmaker baseline)
+- Draw Recall: 63% (vs 0% bookmaker)
+- Log Loss: 0.748 (vs 0.932 bookmaker)
+- Brier: 0.151 (vs 0.183 bookmaker)
+- High-conf accuracy @ 0.65: 76.8% on 58% of matches
 
 ## Next Session Priority
-Build backtesting framework (`src/ml/backtest.py`) — time-based splits, metrics (accuracy, log loss, Brier, per-class F1, draw recall). Then train logistic regression baseline.
-Awaiting GPT answers on: class imbalance strategy, split design (2+1 seasons vs rolling), draw_likelihood feature skew concern, defensive solidity variance concern.
+Wire champion LR model into LangGraph workflow:
+1. Train final model on all 3 seasons (`src/ml/train_final.py`) — save to `models/lr_champion.pkl`
+2. Replace LLM predictor node in `src/workflows/prediction_workflow.py` with ML inference node
+3. Keep: stats collector, draw detector, confidence calculator, logger, Streamlit
 
 ## Collaboration Workflow
-At every major implementation step, a prompt is framed for ChatGPT asking for clarifications or review before proceeding. Claude implements, GPT reviews/advises, both work together. User relays responses between them.
+At every major implementation step, frame a prompt for ChatGPT asking for clarifications or review. Claude implements, GPT reviews/advises, user relays responses.
 **Always end GPT prompts with "Answer compactly." — user has limited tokens.**
 
 ## Session Log
-**2026-04-14** — Planned full ML replacement of LLM predictor. Agreed plan with GPT + Claude review. Decisions locked. Plan saved to `ML_PLAN.md`. No code written yet.
-**2026-04-14** — Leakage audit passed (all stat calls use strict `date < ?`; MCP get_team_form bypassed). Built `src/ml/build_dataset.py`. Generated `data/processed/training_dataset.csv` (941 rows, 11 features + label). Distribution: H=432, D=209, A=300. Pushed to GitHub.
+**2026-04-14** — Planned full ML replacement of LLM predictor. Agreed plan with GPT + Claude review. Decisions locked. Plan saved to `ML_PLAN.md`.
+**2026-04-14** — Leakage audit passed. Built dataset builder. 941 rows, 11 features. Pushed.
+**2026-04-14** — Built backtesting framework. LR: 65% acc, 60% draw recall, LL=0.745. LightGBM: 59.8% — loses on all metrics, dropped. Confidence sweep: 0.65 threshold chosen.
+**2026-04-14** — Feature ablations complete. h2h_draw_rate is critical. draw_likelihood and def_solidity dropped. Champion: 8 features (bm probs + h2h_draw_rate + weighted form). Results stable across both folds.

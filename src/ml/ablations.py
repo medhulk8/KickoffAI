@@ -51,6 +51,17 @@ FEATURE_GROUPS = {
     "drop h2h_draw_rate":   [f for f in ALL_FEATURES if f != "h2h_draw_rate"],
     "drop def_solidity":    [f for f in ALL_FEATURES if f not in ("home_def_solidity", "away_def_solidity")],
     "drop draw signals":    [f for f in ALL_FEATURES if f not in ("draw_likelihood", "h2h_draw_rate")],
+    # --- Final targeted ablations ---
+    "bm + h2h_draw_rate": [
+        "bm_home_prob", "bm_draw_prob", "bm_away_prob",
+        "h2h_draw_rate",
+    ],
+    "bm + h2h_draw_rate + form": [
+        "bm_home_prob", "bm_draw_prob", "bm_away_prob",
+        "h2h_draw_rate",
+        "home_weighted_ppg", "away_weighted_ppg",
+        "home_weighted_goals", "away_weighted_goals",
+    ],
 }
 
 
