@@ -37,13 +37,22 @@ LLM predictor node in LangGraph replaced with trained ML model.
 |---|---|---|---|
 | Fold 1 | 2223 | 54.6% / LL=0.9724 / DrawR=0% | ~same |
 | Fold 2 | 2324 | 59.9% / LL=0.9119 | 57.7% / LL=0.8301 |
-| Fold 3 | 2425 (unseen) | 54.1% / LL=0.9788 | tested honestly |
+| **Fold 3** | **2425 (canonical unseen)** | **54.1% / LL=0.9722** | **54.1% / LL=0.9788** |
+
+**Conclusion:** LR matches bookmaker baseline out-of-sample. No edge. Draw recall = 0% across all honest evals.
+
+## Confidence Thresholds (Fold 3, 2425)
+| Threshold | Coverage | Accuracy |
+|---|---|---|
+| 0.65 (default) | 29% | 69.4% |
+| 0.70 (strict) | 20% | 73.3% |
 
 ## Model Positioning
-Path A: bookmaker probability calibration / confidence layer.
-- High-confidence selections (max_prob ≥ 0.65): ~79.9% accuracy on ~51% of matches (from pre-leakage eval, treat as indicative)
-- Not a market-beating draw predictor
-- Value: structured API wrapper around bookmaker signal with calibrated confidence scores
+Path A: bookmaker probability wrapper and confidence filter.
+- Does **not** show a reliable out-of-sample edge over bookmaker baseline
+- Draw prediction unresolved — draw recall = 0% in all honest post-leakage evals
+- Value: structured probability API with calibrated confidence tiers
+- **V1 modeling closed.**
 
 ## Bugs Fixed This Session
 - **H2H SQL precedence bug** (`advanced_stats.py` line ~339): OR branches not wrapped in parens, so `AND date < ?` only filtered one direction. This caused future H2H data to leak in, inflating the old draw recall to 56%. Fixed by wrapping OR in parens.
@@ -64,3 +73,4 @@ At every major implementation step, frame a prompt for ChatGPT. Claude implement
 **2026-04-14** — SQL fix revealed old results were leaked. Honest Fold 2: 57.7% acc, 2.4% draw recall.
 **2026-04-14** — Added 7-season H2H context (1718/1819/1920 as context-only). Added home_draw_rate/away_draw_rate features. H2H coverage for 2122 improved from 48% to 16% at Laplace default. Best config (bm + all draw signals): Fold 2 = 60.2% acc, LL=0.9061 — marginally beats bookmaker. Draw recall still <4%.
 **2026-04-14** — Path A conclusion: no meaningful draw signal found. Retrained production on bookmaker-only (3 features, 1136 matches). Updated metadata with honest evaluation notes and leakage bug context. Deployed.
+**2026-04-14** — Fold 3 canonical eval: 54.1% acc / LL=0.9788. LR matches bookmaker baseline on unseen season. Confidence sweep: 0.65→69.4% on 29%, 0.70→73.3% on 20%. Metadata updated. V1 modeling closed.
