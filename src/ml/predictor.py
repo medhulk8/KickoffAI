@@ -77,6 +77,19 @@ class MLPredictor:
         draw_prob /= total
         away_prob /= total
 
+        # Cap max probability at 92% — prevents any single feature
+        # from dominating to near-certainty (e.g. extreme h2h_draw_rate)
+        MAX_PROB = 0.92
+        probs = {"H": home_prob, "D": draw_prob, "A": away_prob}
+        if max(probs.values()) > MAX_PROB:
+            excess = max(probs.values()) - MAX_PROB
+            top = max(probs, key=probs.get)
+            others = [k for k in probs if k != top]
+            probs[top] = MAX_PROB
+            probs[others[0]] += excess / 2
+            probs[others[1]] += excess / 2
+            home_prob, draw_prob, away_prob = probs["H"], probs["D"], probs["A"]
+
         max_prob = max(home_prob, draw_prob, away_prob)
         prediction = max({"H": home_prob, "D": draw_prob, "A": away_prob}, key=lambda k: {"H": home_prob, "D": draw_prob, "A": away_prob}[k])
 

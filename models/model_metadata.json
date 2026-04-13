@@ -32,9 +32,9 @@
   },
   "confidence_threshold": 0.65,
   "holdout_metrics": {
-    "accuracy": 0.6495,
-    "log_loss": 0.7475,
-    "brier": 0.1514,
+    "accuracy": 0.6546,
+    "log_loss": 0.77,
+    "brier": 0.1542,
     "draw_recall": 0.629
   },
   "notes": "Retrain on all 3 seasons before live deployment."

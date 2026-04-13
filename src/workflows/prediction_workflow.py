@@ -898,10 +898,11 @@ def create_workflow_components(
             home_wf   = state.get("home_weighted_form", {})
             away_wf   = state.get("away_weighted_form", {})
 
-            # Compute h2h_draw_rate (with fallback)
+            # Compute h2h_draw_rate with Laplace smoothing (alpha=1)
+            # Prevents extreme 0.0 or 1.0 values from small samples
             h2h_n     = h2h.get("matches_played", 0)
             h2h_draws = h2h.get("draws", 0)
-            h2h_draw_rate = (h2h_draws / h2h_n) if h2h_n > 0 else 0.25
+            h2h_draw_rate = (h2h_draws + 1.0) / (h2h_n + 2.0)
 
             features = {
                 "bm_home_prob":        baseline.get("home_prob", 0.33),

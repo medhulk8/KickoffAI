@@ -69,12 +69,15 @@ def load_all_matches(db_path: str) -> list[dict]:
     return rows
 
 
-def compute_h2h_draw_rate(h2h_stats: dict) -> float:
-    """Extract H2H draw rate from h2h stats dict."""
+def compute_h2h_draw_rate(h2h_stats: dict, alpha: float = 1.0) -> float:
+    """
+    Smoothed H2H draw rate using Laplace smoothing.
+    Prevents extreme values (0.0 or 1.0) when sample is small.
+    Formula: (draws + alpha) / (matches + 2*alpha)
+    """
     n = h2h_stats.get("matches_played", 0)
-    if n == 0:
-        return 0.25  # fallback to league average
-    return round(h2h_stats.get("draws", 0) / n, 4)
+    draws = h2h_stats.get("draws", 0)
+    return round((draws + alpha) / (n + 2 * alpha), 4)
 
 
 def build_row(
