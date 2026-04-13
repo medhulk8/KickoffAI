@@ -4,10 +4,18 @@ Interactive Streamlit interface for match predictions
 """
 
 import streamlit as st
-import asyncio
 import sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime
+
+PROJECT_ROOT_PATH = Path(__file__).parent
+sys.path.insert(0, str(PROJECT_ROOT_PATH))
+
+from src.data.weighted_stats import WeightedStatsCalculator
+from src.data.advanced_stats import AdvancedStatsCalculator
+from src.ml.predictor import MLPredictor
+from src.ml.build_dataset import compute_h2h_draw_rate
 
 # Set page config
 st.set_page_config(
@@ -65,6 +73,18 @@ st.markdown('<div class="sub-header">AI-Powered Football Match Predictions</div>
 # Database path
 PROJECT_ROOT = Path(__file__).parent
 DB_PATH = PROJECT_ROOT / "data" / "processed" / "asil.db"
+
+@st.cache_resource
+def get_ml_predictor():
+    return MLPredictor()
+
+@st.cache_resource
+def get_weighted_calc():
+    return WeightedStatsCalculator(str(DB_PATH))
+
+@st.cache_resource
+def get_advanced_calc():
+    return AdvancedStatsCalculator(str(DB_PATH))
 
 @st.cache_data
 def get_seasons():
@@ -160,42 +180,74 @@ def get_matches_between_teams(season: str, team1: str, team2: str):
         st.error(f"Error loading matches: {e}")
         return []
 
-async def predict_match_async(match_id: int):
-    """Run prediction for a match"""
+def predict_match(match_id: int):
+    """Run ML prediction for a match directly (no MCP/LLM needed)."""
     try:
-        # Import here to avoid issues
-        from src.agent.agent import connect_to_mcp
-        from src.kg import DynamicKnowledgeGraph
-        from src.rag import WebSearchRAG
-        from src.workflows.prediction_workflow import build_prediction_graph
+        db_path = str(DB_PATH)
 
-        # Connect to MCP
-        async with connect_to_mcp() as mcp_client:
-            # Initialize components
-            kg = DynamicKnowledgeGraph(
-                db_path=str(DB_PATH),
-                web_rag=None,  # No web search
-                ollama_model="llama3.1:8b"
-            )
+        # Load match from DB
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM matches WHERE match_id = ?", (match_id,)).fetchone()
+        conn.close()
 
-            # Build workflow
-            workflow = build_prediction_graph(
-                mcp_client=mcp_client,
-                db_path=DB_PATH,
-                kg=kg,
-                web_rag=None,
-                ollama_model="llama3.1:8b",
-                use_ensemble=False
-            )
+        if row is None:
+            st.error(f"Match {match_id} not found")
+            return None
 
-            # Run prediction
-            result = await workflow.ainvoke({
-                "match_id": match_id,
-                "verbose": False,
-                "skip_web_search": True
-            })
+        match = dict(row)
+        date = match["date"]
+        home = match["home_team"]
+        away = match["away_team"]
 
-            return result
+        if match.get("avg_home_prob") is None:
+            st.error("No bookmaker odds available for this match")
+            return None
+
+        wgt_calc = get_weighted_calc()
+        adv_calc = get_advanced_calc()
+        ml       = get_ml_predictor()
+
+        home_wf = wgt_calc.get_weighted_form(home, last_n=5, before_date=date)
+        away_wf = wgt_calc.get_weighted_form(away, last_n=5, before_date=date)
+        h2h     = adv_calc.get_head_to_head_stats(home, away, last_n=10, before_date=date)
+
+        h2h_draw_rate = compute_h2h_draw_rate(h2h)
+
+        features = {
+            "bm_home_prob":        match["avg_home_prob"],
+            "bm_draw_prob":        match["avg_draw_prob"],
+            "bm_away_prob":        match["avg_away_prob"],
+            "h2h_draw_rate":       h2h_draw_rate,
+            "home_weighted_ppg":   home_wf["weighted_points_per_game"],
+            "away_weighted_ppg":   away_wf["weighted_points_per_game"],
+            "home_weighted_goals": home_wf["weighted_goals_per_game"],
+            "away_weighted_goals": away_wf["weighted_goals_per_game"],
+        }
+
+        result = ml.predict(features)
+        actual = match.get("result")
+
+        return {
+            "match": {"home_team": home, "away_team": away, "date": date},
+            "prediction": {
+                "home_prob":   result["home_prob"],
+                "draw_prob":   result["draw_prob"],
+                "away_prob":   result["away_prob"],
+                "confidence":  result["confidence"],
+                "reasoning": (
+                    f"ML model ({result['model_version']}) — "
+                    f"Bookmaker: {features['bm_home_prob']:.0%} / {features['bm_draw_prob']:.0%} / {features['bm_away_prob']:.0%} | "
+                    f"H2H draw rate: {h2h_draw_rate:.0%} | "
+                    f"Home wPPG: {home_wf['weighted_points_per_game']:.2f} | "
+                    f"Away wPPG: {away_wf['weighted_points_per_game']:.2f}"
+                ),
+            },
+            "evaluation": {
+                "outcome": actual,
+                "llm_correct": result["prediction"] == actual,
+            } if actual else None,
+        }
 
     except Exception as e:
         st.error(f"Prediction error: {e}")
@@ -400,11 +452,7 @@ if mode == "Historical Match (Test)":
             with st.spinner("Running AI analysis..."):
                 match_id = match_options[selected_match]
 
-                # Run async prediction
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                result = loop.run_until_complete(predict_match_async(match_id))
-                loop.close()
+                result = predict_match(match_id)
 
                 if result:
                     display_prediction_results(result)

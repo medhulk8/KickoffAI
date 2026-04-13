@@ -337,8 +337,8 @@ class AdvancedStatsCalculator:
 
         # Build query
         where_clause = """
-            WHERE (home_team = ? AND away_team = ?)
-               OR (home_team = ? AND away_team = ?)
+            WHERE ((home_team = ? AND away_team = ?)
+               OR  (home_team = ? AND away_team = ?))
         """
         params = [team1, team2, team2, team1]
 

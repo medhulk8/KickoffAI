@@ -48,6 +48,11 @@ FOLDS = [
         "train_seasons": ["2122", "2223"],
         "test_seasons":  ["2324"],
     },
+    {
+        "name": "Fold 3",
+        "train_seasons": ["2122", "2223", "2324"],
+        "test_seasons":  ["2425"],
+    },
 ]
 
 
