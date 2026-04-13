@@ -1,9 +1,9 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**Phase: PATH A — PRODUCTION MODEL DEPLOYED. Bookmaker probability calibration + confidence layer.**
-SQL leakage bug fixed. No meaningful draw edge found after exhaustive honest testing.
-Production model: bookmaker-only LR, trained on 2122+2223+2324 (1136 matches). Confidence threshold 0.65.
+**Two modules deployed:**
+1. **H/D/A predictor (Path A):** Bookmaker probability wrapper + confidence filter. No out-of-sample edge over bookmaker. V1+V2 closed.
+2. **O/U 2.5 ranker (experimental):** Ranking-first module. Top-20% slice hit 72% over rate (1.27x lift) on one unseen season. AUC gain not statistically proven. Paused pending more live data.
 
 ## What This Project Does
 Predicts Premier League match outcomes (H/D/A) with probabilities.
@@ -12,7 +12,8 @@ LLM predictor node in LangGraph replaced with trained ML model.
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
 - LangGraph workflow (`src/workflows/prediction_workflow.py`)
-- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py, train_final.py, predictor.py, elo.py, dixon_coles.py, dc_ablation.py
+- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py, train_final.py, predictor.py, elo.py, dixon_coles.py, dc_ablation.py, build_ou_dataset.py, ou_backtest.py, ou_ranker.py
+- Models: `models/lr_champion.pkl` (H/D/A), `models/ou_ranker.pkl` (O/U ranking)
 - DB: 7 seasons in DB (1718–2425), training on 2122–2324, holdout 2425
 - source: football-data.co.uk
 
@@ -46,6 +47,27 @@ LLM predictor node in LangGraph replaced with trained ML model.
 |---|---|---|
 | 0.65 (default) | 29% | 69.4% |
 | 0.70 (strict) | 20% | 73.3% |
+
+## O/U 2.5 Ranker (experimental module — paused)
+**Approach:** Ranking-first. LR on bookmaker O/U implied probability + rolling shot/goal features (last 5 matches). Percentile buckets, not probability thresholds.
+
+**Fold 3 (2425, unseen) results:**
+| Model | AUC | vs Bookmaker |
+|---|---|---|
+| Bookmaker O/U baseline | 0.569 | — |
+| LR bm O/U + shot features | 0.580 | +0.011 |
+
+**Bootstrap (10k resamples):** Mean diff +0.011, 95% CI [-0.013, +0.035] — CI crosses zero. Not statistically proven.
+
+**Top-decile lift:**
+| Bucket | n | Over rate | Lift |
+|---|---|---|---|
+| Top 10% | 37 | 75.7% | 1.33x |
+| Top 20% (main slice) | 75 | 72.0% | 1.27x |
+
+**Honest status:** AUC gain unproven at n=379. Top-20% lift is the most concrete signal found in the project. Calibration weaker than bookmaker — use percentile rank, not raw score. Next real test: live / 2025-26 season data.
+
+**Thresholds (from training distribution):** p80=0.6397 (top-20%), p90=0.6781 (top-10%)
 
 ## V2 Experiments (clean negative results)
 Tested after V1 closure — all evaluated on Fold 3 (2425, unseen):
@@ -90,3 +112,4 @@ At every major implementation step, frame a prompt for ChatGPT. Claude implement
 **2026-04-14** — Path A conclusion: no meaningful draw signal found. Retrained production on bookmaker-only (3 features, 1136 matches). Updated metadata with honest evaluation notes and leakage bug context. Deployed.
 **2026-04-14** — Fold 3 canonical eval: 54.1% acc / LL=0.9788. LR matches bookmaker baseline on unseen season. Confidence sweep: 0.65→69.4% on 29%, 0.70→73.3% on 20%. Metadata updated. V1 modeling closed.
 **2026-04-14** — V2: Elo (elo_diff) — no gain, redundant with bookmaker odds. Dixon-Coles (pure + bookmaker calibration layer) — worse than bookmaker on Fold 3. Draw recall 0% throughout. V2 closed as clean negative result. Bookmaker odds are the effective ceiling without richer data.
+**2026-04-14** — O/U 2.5 module: ingested shots-on-target and bookmaker O/U odds. LR (bm O/U + shots) AUC=0.580 vs bookmaker 0.569 on Fold 3. Bootstrap CI crosses zero — unproven but interesting. Top-20% lift 1.27x. Built percentile ranker (ou_ranker.py). O/U v1 paused pending live data.

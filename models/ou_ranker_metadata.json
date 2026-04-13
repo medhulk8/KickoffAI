@@ -1,0 +1,66 @@
+{
+  "model_type": "LogisticRegression",
+  "features": [
+    "home_goals_scored",
+    "home_goals_conceded",
+    "away_goals_scored",
+    "away_goals_conceded",
+    "home_sot",
+    "away_sot",
+    "home_sot_conceded",
+    "away_sot_conceded",
+    "home_conversion",
+    "away_conversion",
+    "total_attack",
+    "total_defence_loose",
+    "total_sot",
+    "elo_diff",
+    "bm_over25_prob"
+  ],
+  "n_features": 15,
+  "train_seasons": [
+    "1718",
+    "1819",
+    "1920",
+    "2021",
+    "2122",
+    "2223",
+    "2324"
+  ],
+  "train_n": 2260,
+  "score_percentiles": {
+    "p80": 0.6397,
+    "p90": 0.6781
+  },
+  "product_slices": {
+    "top_20pct": {
+      "threshold": 0.6397,
+      "fold3_over_rate": 0.72,
+      "fold3_base_rate": 0.567,
+      "fold3_lift": 1.27,
+      "fold3_n": 75,
+      "recommendation": "Main product slice"
+    },
+    "top_10pct": {
+      "threshold": 0.6781,
+      "fold3_over_rate": 0.757,
+      "fold3_base_rate": 0.567,
+      "fold3_lift": 1.33,
+      "fold3_n": 37,
+      "recommendation": "Experimental elite slice \u2014 fragile at n=37"
+    }
+  },
+  "validation": {
+    "fold3_auc_model": 0.5797,
+    "fold3_auc_bookmaker": 0.5685,
+    "bootstrap_auc_diff_mean": 0.011,
+    "bootstrap_auc_diff_ci": [
+      -0.013,
+      0.035
+    ],
+    "bootstrap_p_positive": 0.819,
+    "calibration": "Model calibration weaker than bookmaker in mid-range bins",
+    "honest_status": "Ranking signal not statistically proven (CI crosses zero, n=379). Top-20% lift observed on one unseen season (2425). Validate with more live data before treating as production-grade."
+  },
+  "notes": "Ranking-first product: use percentile buckets, not raw score thresholds. Do not present scores as calibrated probabilities. Reopen after 2025-26 season data available."
+}
