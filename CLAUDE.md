@@ -38,10 +38,10 @@ Goal: replace LLM predictor node in LangGraph with trained ML model. Keep everyt
 - High-conf accuracy @ 0.65: 76.8% on 58% of matches
 
 ## Next Session Priority
-Wire champion LR model into LangGraph workflow:
-1. Train final model on all 3 seasons (`src/ml/train_final.py`) — save to `models/lr_champion.pkl`
-2. Replace LLM predictor node in `src/workflows/prediction_workflow.py` with ML inference node
-3. Keep: stats collector, draw detector, confidence calculator, logger, Streamlit
+Validate end-to-end app path on one known historical match:
+- Run the Streamlit app or workflow on a 2023-24 match and confirm ML prediction fires correctly
+- Check logs for feature values and output probs
+- Then: retrain on all 3 seasons once integration is confirmed stable (`src/ml/train_final.py` — change TRAIN_SEASONS to include "2324")
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT asking for clarifications or review. Claude implements, GPT reviews/advises, user relays responses.
@@ -52,3 +52,4 @@ At every major implementation step, frame a prompt for ChatGPT asking for clarif
 **2026-04-14** — Leakage audit passed. Built dataset builder. 941 rows, 11 features. Pushed.
 **2026-04-14** — Built backtesting framework. LR: 65% acc, 60% draw recall, LL=0.745. LightGBM: 59.8% — loses on all metrics, dropped. Confidence sweep: 0.65 threshold chosen.
 **2026-04-14** — Feature ablations complete. h2h_draw_rate is critical. draw_likelihood and def_solidity dropped. Champion: 8 features (bm probs + h2h_draw_rate + weighted form). Results stable across both folds.
+**2026-04-14** — Trained champion model on 2122+2223, holdout 2324: 65% acc, 63% draw recall, LL=0.748. Saved to models/lr_champion.pkl + model_metadata.json. Built MLPredictor inference wrapper with validation. Wired ml_predictor_node into LangGraph (llm_predictor kept but unwired). Smoke test passed.
