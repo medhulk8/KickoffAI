@@ -32,6 +32,7 @@ Awaiting GPT answers on: class imbalance strategy, split design (2+1 seasons vs 
 
 ## Collaboration Workflow
 At every major implementation step, a prompt is framed for ChatGPT asking for clarifications or review before proceeding. Claude implements, GPT reviews/advises, both work together. User relays responses between them.
+**Always end GPT prompts with "Answer compactly." — user has limited tokens.**
 
 ## Session Log
 **2026-04-14** — Planned full ML replacement of LLM predictor. Agreed plan with GPT + Claude review. Decisions locked. Plan saved to `ML_PLAN.md`. No code written yet.
