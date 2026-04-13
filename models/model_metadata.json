@@ -1,0 +1,41 @@
+{
+  "model_type": "LogisticRegression",
+  "sklearn_pipeline": true,
+  "feature_version": "v1",
+  "features": [
+    "bm_home_prob",
+    "bm_draw_prob",
+    "bm_away_prob",
+    "h2h_draw_rate",
+    "home_weighted_ppg",
+    "away_weighted_ppg",
+    "home_weighted_goals",
+    "away_weighted_goals"
+  ],
+  "n_features": 8,
+  "classes": [
+    "A",
+    "D",
+    "H"
+  ],
+  "train_seasons": [
+    "2122",
+    "2223"
+  ],
+  "holdout_season": "2324",
+  "train_n": 747,
+  "training_date": "2026-04-14",
+  "hyperparams": {
+    "C": 0.1,
+    "solver": "lbfgs",
+    "max_iter": 1000
+  },
+  "confidence_threshold": 0.65,
+  "holdout_metrics": {
+    "accuracy": 0.6495,
+    "log_loss": 0.7475,
+    "brier": 0.1514,
+    "draw_recall": 0.629
+  },
+  "notes": "Retrain on all 3 seasons before live deployment."
+}

@@ -872,6 +872,102 @@ def create_workflow_components(
             }
 
     # =========================================================================
+    # Node 5b: ml_predictor_node  (replaces LLM predictor)
+    # =========================================================================
+    async def ml_predictor_node(state: PredictionState) -> PredictionState:
+        """
+        Generate prediction using the trained ML model (champion LR).
+
+        Replaces llm_predictor_node. Reads features from state populated
+        by stats_collector, computes h2h_draw_rate, runs MLPredictor.
+        Falls back to bookmaker baseline on any error.
+        """
+        verbose = state.get("verbose", True)
+
+        if state.get("error"):
+            return {}
+
+        if verbose:
+            print("\n🤖 [MLPredictor] Running champion LR model...")
+
+        try:
+            from src.ml.predictor import MLPredictor
+
+            baseline  = state["baseline"]
+            h2h       = state.get("h2h_stats", {})
+            home_wf   = state.get("home_weighted_form", {})
+            away_wf   = state.get("away_weighted_form", {})
+
+            # Compute h2h_draw_rate (with fallback)
+            h2h_n     = h2h.get("matches_played", 0)
+            h2h_draws = h2h.get("draws", 0)
+            h2h_draw_rate = (h2h_draws / h2h_n) if h2h_n > 0 else 0.25
+
+            features = {
+                "bm_home_prob":        baseline.get("home_prob", 0.33),
+                "bm_draw_prob":        baseline.get("draw_prob", 0.33),
+                "bm_away_prob":        baseline.get("away_prob", 0.33),
+                "h2h_draw_rate":       h2h_draw_rate,
+                "home_weighted_ppg":   home_wf.get("weighted_points_per_game", 1.5),
+                "away_weighted_ppg":   away_wf.get("weighted_points_per_game", 1.5),
+                "home_weighted_goals": home_wf.get("weighted_goals_per_game", 1.2),
+                "away_weighted_goals": away_wf.get("weighted_goals_per_game", 1.2),
+            }
+
+            ml = MLPredictor()
+            result = ml.predict(features)
+
+            prediction = {
+                "home_prob":   result["home_prob"],
+                "draw_prob":   result["draw_prob"],
+                "away_prob":   result["away_prob"],
+                "reasoning":   (
+                    f"ML model ({result['model_version']}) prediction. "
+                    f"Features: BM={result['input_features']['bm_home_prob']:.0%}/"
+                    f"{result['input_features']['bm_draw_prob']:.0%}/"
+                    f"{result['input_features']['bm_away_prob']:.0%}, "
+                    f"H2H draw rate={result['input_features']['h2h_draw_rate']:.0%}, "
+                    f"Home wPPG={result['input_features']['home_weighted_ppg']:.2f}, "
+                    f"Away wPPG={result['input_features']['away_weighted_ppg']:.2f}"
+                ),
+                "confidence":  result["confidence"],
+                "parse_method": "ml_model",
+                "model_version": result["model_version"],
+            }
+
+            if verbose:
+                print(f"   Prediction: H={result['home_prob']:.1%}, D={result['draw_prob']:.1%}, A={result['away_prob']:.1%}")
+                print(f"   Confidence: {result['confidence']} (max_prob={result['max_prob']:.1%})")
+
+            return {
+                "prediction": prediction,
+                "confidence_level": result["confidence"],
+                "iteration_count": state.get("iteration_count", 0) + 1,
+            }
+
+        except Exception as e:
+            logger.error(f"ML prediction failed: {e}")
+            if verbose:
+                print(f"   ⚠️ ML error: {e}. Falling back to baseline.")
+
+            baseline = state["baseline"]
+            probs = [baseline["home_prob"], baseline["draw_prob"], baseline["away_prob"]]
+            outcomes = ["H", "D", "A"]
+            best = outcomes[probs.index(max(probs))]
+            return {
+                "prediction": {
+                    "home_prob":  baseline["home_prob"],
+                    "draw_prob":  baseline["draw_prob"],
+                    "away_prob":  baseline["away_prob"],
+                    "reasoning":  f"ML error: {e}. Using bookmaker baseline.",
+                    "confidence": "low",
+                    "parse_method": "error_fallback",
+                },
+                "confidence_level": "low",
+                "iteration_count": state.get("iteration_count", 0) + 1,
+            }
+
+    # =========================================================================
     # Node 6: critique_node
     # =========================================================================
     async def critique_node(state: PredictionState) -> PredictionState:
@@ -1029,7 +1125,8 @@ In 1-2 sentences, identify any concerns or potential biases in this prediction."
         "stats_collector": stats_collector_node,
         "kg_query": kg_query_node,
         "web_search": web_search_node,
-        "llm_predictor": llm_predictor_node,
+        "llm_predictor": llm_predictor_node,   # kept for reference/flag fallback
+        "ml_predictor": ml_predictor_node,      # champion ML model
         "critique": critique_node,
         "logger": logger_node,
         "evaluator": evaluator_node
@@ -1084,12 +1181,12 @@ def create_prediction_workflow(
     # Create workflow graph
     workflow = StateGraph(PredictionState)
 
-    # Add all 8 nodes
+    # Add nodes (llm_predictor kept but not wired — use ml_predictor instead)
     workflow.add_node("match_selector", components["match_selector"])
     workflow.add_node("stats_collector", components["stats_collector"])
     workflow.add_node("kg_query", components["kg_query"])
     workflow.add_node("web_search", components["web_search"])
-    workflow.add_node("llm_predictor", components["llm_predictor"])
+    workflow.add_node("ml_predictor", components["ml_predictor"])
     workflow.add_node("critique", components["critique"])
     workflow.add_node("logger", components["logger"])
     workflow.add_node("evaluator", components["evaluator"])
@@ -1101,22 +1198,22 @@ def create_prediction_workflow(
     workflow.add_edge("match_selector", "stats_collector")
     workflow.add_edge("stats_collector", "kg_query")
 
-    # Conditional: skip web search?
+    # Conditional: skip web search? (always skip to ml_predictor now)
     if skip_web_search:
-        workflow.add_edge("kg_query", "llm_predictor")
+        workflow.add_edge("kg_query", "ml_predictor")
     else:
         workflow.add_conditional_edges(
             "kg_query",
-            should_skip_web_search,
+            lambda s: "web_search" if not s.get("skip_web_search") and not s.get("error") else "ml_predictor",
             {
                 "web_search": "web_search",
-                "llm_predictor": "llm_predictor"
+                "ml_predictor": "ml_predictor"
             }
         )
-        workflow.add_edge("web_search", "llm_predictor")
+        workflow.add_edge("web_search", "ml_predictor")
 
     # Continue linear flow
-    workflow.add_edge("llm_predictor", "critique")
+    workflow.add_edge("ml_predictor", "critique")
     workflow.add_edge("critique", "logger")
     workflow.add_edge("logger", "evaluator")
     workflow.add_edge("evaluator", END)
