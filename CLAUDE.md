@@ -12,7 +12,7 @@ LLM predictor node in LangGraph replaced with trained ML model.
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
 - LangGraph workflow (`src/workflows/prediction_workflow.py`)
-- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py, train_final.py, predictor.py
+- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py, train_final.py, predictor.py, elo.py, dixon_coles.py, dc_ablation.py
 - DB: 7 seasons in DB (1718–2425), training on 2122–2324, holdout 2425
 - source: football-data.co.uk
 
@@ -47,12 +47,27 @@ LLM predictor node in LangGraph replaced with trained ML model.
 | 0.65 (default) | 29% | 69.4% |
 | 0.70 (strict) | 20% | 73.3% |
 
+## V2 Experiments (clean negative results)
+Tested after V1 closure — all evaluated on Fold 3 (2425, unseen):
+
+| Experiment | Fold 3 Acc | Fold 3 LL | vs Bookmaker |
+|---|---|---|---|
+| Elo (elo_diff feature) | 54.4% | 0.9787 | no gain |
+| Dixon-Coles pure | 49.9% | 1.0962 | worse |
+| Dixon-Coles + bookmaker LR | 51.2% | 0.9946 | worse |
+
+**V2 conclusion:** bookmaker odds are the effective ceiling for this dataset. Elo is redundant (market already prices team strength). Dixon-Coles fails to beat the market — the available information is weaker than the bookmaker signal.
+
+Draw recall = 0% across every V2 config. The rho correction does not produce meaningful draw probability mass above the decision threshold.
+
+**To move beyond this ceiling requires genuinely new information:** xG/shot quality, lineup/injury data, or timestamped odds movement. Without that, model variants only rearrange signal the market already has.
+
 ## Model Positioning
-Path A: bookmaker probability wrapper and confidence filter.
+Bookmaker probability wrapper and confidence filter.
 - Does **not** show a reliable out-of-sample edge over bookmaker baseline
-- Draw prediction unresolved — draw recall = 0% in all honest post-leakage evals
+- Draw prediction unresolved — 0% draw recall in all honest evaluations
 - Value: structured probability API with calibrated confidence tiers
-- **V1 modeling closed.**
+- **V1 + V2 modeling closed. Reopen only with richer data (xG, lineups, odds movement).**
 
 ## Bugs Fixed This Session
 - **H2H SQL precedence bug** (`advanced_stats.py` line ~339): OR branches not wrapped in parens, so `AND date < ?` only filtered one direction. This caused future H2H data to leak in, inflating the old draw recall to 56%. Fixed by wrapping OR in parens.
@@ -74,3 +89,4 @@ At every major implementation step, frame a prompt for ChatGPT. Claude implement
 **2026-04-14** — Added 7-season H2H context (1718/1819/1920 as context-only). Added home_draw_rate/away_draw_rate features. H2H coverage for 2122 improved from 48% to 16% at Laplace default. Best config (bm + all draw signals): Fold 2 = 60.2% acc, LL=0.9061 — marginally beats bookmaker. Draw recall still <4%.
 **2026-04-14** — Path A conclusion: no meaningful draw signal found. Retrained production on bookmaker-only (3 features, 1136 matches). Updated metadata with honest evaluation notes and leakage bug context. Deployed.
 **2026-04-14** — Fold 3 canonical eval: 54.1% acc / LL=0.9788. LR matches bookmaker baseline on unseen season. Confidence sweep: 0.65→69.4% on 29%, 0.70→73.3% on 20%. Metadata updated. V1 modeling closed.
+**2026-04-14** — V2: Elo (elo_diff) — no gain, redundant with bookmaker odds. Dixon-Coles (pure + bookmaker calibration layer) — worse than bookmaker on Fold 3. Draw recall 0% throughout. V2 closed as clean negative result. Bookmaker odds are the effective ceiling without richer data.

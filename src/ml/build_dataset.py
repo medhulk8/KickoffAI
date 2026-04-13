@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.advanced_stats import AdvancedStatsCalculator
 from src.data.weighted_stats import WeightedStatsCalculator
+from src.ml.elo import EloCalculator
 
 # Import directly to avoid pulling in Ollama/LangGraph from workflows __init__
 import importlib.util, pathlib
@@ -69,6 +70,20 @@ def load_all_matches(db_path: str) -> list[dict]:
     return rows
 
 
+def load_all_matches_for_elo(db_path: str) -> list[dict]:
+    """Load ALL matches (including those without odds) for Elo warm-up."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("""
+        SELECT match_id, date, home_team, away_team, result
+        FROM matches
+        ORDER BY date ASC
+    """)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
 def compute_h2h_draw_rate(h2h_stats: dict, alpha: float = 1.0) -> float:
     """
     Smoothed H2H draw rate using Laplace smoothing.
@@ -85,6 +100,7 @@ def build_row(
     adv_calc: AdvancedStatsCalculator,
     wgt_calc: WeightedStatsCalculator,
     draw_detector: DrawDetector,
+    elo_diff: float = 0.0,
 ) -> Optional[dict]:
     """
     Compute all features for one match.
@@ -166,6 +182,8 @@ def build_row(
         "h2h_draw_rate": h2h_draw_rate,
         "home_draw_rate": home_draw_rate,
         "away_draw_rate": away_draw_rate,
+        # Elo
+        "elo_diff": round(elo_diff, 2),
         # Label
         "result": match["result"],
     }
@@ -190,11 +208,18 @@ def build_dataset(db_path: str = str(DB_PATH), output_path: Optional[str] = None
     wgt_calc = WeightedStatsCalculator(db_path)
     draw_detector = DrawDetector()
 
+    # Precompute Elo using all matches (including those without odds) for proper warm-up
+    all_matches_for_elo = load_all_matches_for_elo(db_path)
+    elo_calc = EloCalculator()
+    elo_map = elo_calc.compute(all_matches_for_elo)
+    print(f"Elo computed for {len(elo_map)} matches")
+
     rows = []
     skipped = 0
 
     for i, match in enumerate(matches):
-        row = build_row(match, adv_calc, wgt_calc, draw_detector)
+        elo_diff = elo_map.get(match["match_id"], {}).get("elo_diff", 0.0)
+        row = build_row(match, adv_calc, wgt_calc, draw_detector, elo_diff=elo_diff)
         if row is None:
             skipped += 1
             continue
