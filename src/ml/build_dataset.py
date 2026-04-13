@@ -94,13 +94,21 @@ def build_row(
     home = match["home_team"]
     away = match["away_team"]
 
-    # --- Weighted form ---
+    # --- Weighted form (last 5 for PPG/goals, last 10 for draw rates) ---
     home_wform = wgt_calc.get_weighted_form(home, last_n=5, before_date=date)
     away_wform = wgt_calc.get_weighted_form(away, last_n=5, before_date=date)
 
     # Skip matches with no prior data for either team
     if home_wform["matches_played"] == 0 or away_wform["matches_played"] == 0:
         return None
+
+    # Draw rate over last 10 matches (Laplace smoothed, alpha=1)
+    home_wform10 = wgt_calc.get_weighted_form(home, last_n=10, before_date=date)
+    away_wform10 = wgt_calc.get_weighted_form(away, last_n=10, before_date=date)
+    home_n, home_draws = home_wform10["matches_played"], home_wform10["draws"]
+    away_n, away_draws = away_wform10["matches_played"], away_wform10["draws"]
+    home_draw_rate = round((home_draws + 1) / (home_n + 2), 4)
+    away_draw_rate = round((away_draws + 1) / (away_n + 2), 4)
 
     # --- Advanced stats (for defensive solidity) ---
     home_adv = adv_calc.get_team_advanced_stats(home, last_n=5, before_date=date)
@@ -156,6 +164,8 @@ def build_row(
         # Draw signals
         "draw_likelihood": round(draw_likelihood, 4),
         "h2h_draw_rate": h2h_draw_rate,
+        "home_draw_rate": home_draw_rate,
+        "away_draw_rate": away_draw_rate,
         # Label
         "result": match["result"],
     }

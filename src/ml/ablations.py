@@ -28,6 +28,7 @@ ALL_FEATURES = [
     "home_weighted_goals", "away_weighted_goals",
     "home_def_solidity", "away_def_solidity",
     "draw_likelihood", "h2h_draw_rate",
+    "home_draw_rate", "away_draw_rate",
 ]
 
 FEATURE_GROUPS = {
@@ -39,29 +40,31 @@ FEATURE_GROUPS = {
         "home_weighted_ppg", "away_weighted_ppg",
         "home_weighted_goals", "away_weighted_goals",
     ],
-    "bookmaker + form + defense": [
+    "bm + team_draw_rates": [
         "bm_home_prob", "bm_draw_prob", "bm_away_prob",
+        "home_draw_rate", "away_draw_rate",
+    ],
+    "bm + team_draw_rates + form": [
+        "bm_home_prob", "bm_draw_prob", "bm_away_prob",
+        "home_draw_rate", "away_draw_rate",
         "home_weighted_ppg", "away_weighted_ppg",
         "home_weighted_goals", "away_weighted_goals",
-        "home_def_solidity", "away_def_solidity",
     ],
-    "all features (full model)": ALL_FEATURES,
-    # Drop one at a time from full model
-    "drop draw_likelihood": [f for f in ALL_FEATURES if f != "draw_likelihood"],
-    "drop h2h_draw_rate":   [f for f in ALL_FEATURES if f != "h2h_draw_rate"],
-    "drop def_solidity":    [f for f in ALL_FEATURES if f not in ("home_def_solidity", "away_def_solidity")],
-    "drop draw signals":    [f for f in ALL_FEATURES if f not in ("draw_likelihood", "h2h_draw_rate")],
-    # --- Final targeted ablations ---
     "bm + h2h_draw_rate": [
         "bm_home_prob", "bm_draw_prob", "bm_away_prob",
         "h2h_draw_rate",
     ],
-    "bm + h2h_draw_rate + form": [
+    "bm + all draw signals": [
         "bm_home_prob", "bm_draw_prob", "bm_away_prob",
-        "h2h_draw_rate",
+        "h2h_draw_rate", "home_draw_rate", "away_draw_rate",
+    ],
+    "bm + all draw signals + form": [
+        "bm_home_prob", "bm_draw_prob", "bm_away_prob",
+        "h2h_draw_rate", "home_draw_rate", "away_draw_rate",
         "home_weighted_ppg", "away_weighted_ppg",
         "home_weighted_goals", "away_weighted_goals",
     ],
+    "all features (full model)": ALL_FEATURES,
 }
 
 

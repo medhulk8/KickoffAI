@@ -28,6 +28,7 @@ FEATURE_COLS = [
     "home_weighted_goals", "away_weighted_goals",
     "home_def_solidity", "away_def_solidity",
     "draw_likelihood", "h2h_draw_rate",
+    "home_draw_rate", "away_draw_rate",
 ]
 LABEL_COL = "result"
 CLASSES = ["A", "D", "H"]  # alphabetical — sklearn default
