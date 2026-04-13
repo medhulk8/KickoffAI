@@ -142,13 +142,8 @@ if __name__ == "__main__":
     # Simulate a close match
     test_features = {
         "bm_home_prob": 0.38,
-        "bm_draw_prob":  0.30,
-        "bm_away_prob":  0.32,
-        "h2h_draw_rate": 0.40,
-        "home_weighted_ppg":   1.5,
-        "away_weighted_ppg":   1.4,
-        "home_weighted_goals": 1.2,
-        "away_weighted_goals": 1.1,
+        "bm_draw_prob": 0.30,
+        "bm_away_prob": 0.32,
     }
 
     result = predictor.predict(test_features)
@@ -159,13 +154,8 @@ if __name__ == "__main__":
     # Simulate a clear favourite
     test_features2 = {
         "bm_home_prob": 0.78,
-        "bm_draw_prob":  0.14,
-        "bm_away_prob":  0.08,
-        "h2h_draw_rate": 0.10,
-        "home_weighted_ppg":   2.4,
-        "away_weighted_ppg":   0.8,
-        "home_weighted_goals": 2.5,
-        "away_weighted_goals": 0.9,
+        "bm_draw_prob": 0.14,
+        "bm_away_prob": 0.08,
     }
 
     result2 = predictor.predict(test_features2)

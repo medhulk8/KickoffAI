@@ -1,9 +1,9 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**Phase: RE-EVALUATING after SQL leakage bug discovered and fixed.**
-Previous champion results (65.9% acc, 56.1% draw recall) were inflated by a H2H query bug.
-Honest baseline: model barely beats bookmaker on Fold 2 only. Awaiting GPT guidance on next steps.
+**Phase: PATH A — PRODUCTION MODEL DEPLOYED. Bookmaker probability calibration + confidence layer.**
+SQL leakage bug fixed. No meaningful draw edge found after exhaustive honest testing.
+Production model: bookmaker-only LR, trained on 2122+2223+2324 (1136 matches). Confidence threshold 0.65.
 
 ## What This Project Does
 Predicts Premier League match outcomes (H/D/A) with probabilities.
@@ -27,25 +27,23 @@ LLM predictor node in LangGraph replaced with trained ML model.
 - Confidence threshold: **0.65**
 - 3 folds: Fold 1 (→2223), Fold 2 (→2324), Fold 3 (→2425 holdout)
 
-## Current Best Feature Set (under review)
-`bm_home_prob, bm_draw_prob, bm_away_prob, h2h_draw_rate, home_draw_rate, away_draw_rate`
+## Production Feature Set (locked — Path A)
+`bm_home_prob, bm_draw_prob, bm_away_prob`
 
-**Dropped:** draw_likelihood (noisy), def_solidity (zero contribution), weighted form (hurts after leakage fix)
+**Conclusion:** No draw edge found after exhaustive honest testing. H2H, team draw rates, weighted form, def_solidity, draw_likelihood — none produced meaningful draw recall (<4%) without leakage. Bookmaker-only is the cleanest honest model.
 
-## Honest Results (post SQL fix, with 7-season H2H context)
-| Fold | Test | Model | Acc | Log Loss | Brier | DrawR |
-|---|---|---|---|---|---|---|
-| Fold 1 | 2223 | Bookmaker | 54.6% | 0.9724 | 0.1927 | 0% |
-| | | LR draw signals | 54.4% | 0.9871 | 0.1955 | 3.4% |
-| Fold 2 | 2324 | Bookmaker | 59.9% | 0.9119 | 0.1783 | 0% |
-| | | **LR draw signals** | **60.2%** | **0.9061** | **0.1774** | 1.2% |
-| Fold 3 | 2425 | Bookmaker | 54.1% | 0.9788 | 0.1947 | 0% |
-| | | LR draw signals | 53.8% | 0.9810 | 0.1951 | 1.1% |
+## Honest Results (post SQL fix)
+| Fold | Test | Bookmaker baseline | LR bookmaker-only |
+|---|---|---|---|
+| Fold 1 | 2223 | 54.6% / LL=0.9724 / DrawR=0% | ~same |
+| Fold 2 | 2324 | 59.9% / LL=0.9119 | 57.7% / LL=0.8301 |
+| Fold 3 | 2425 (unseen) | 54.1% / LL=0.9788 | tested honestly |
 
-## Known Issues / Open Questions
-- Draw recall is essentially zero across all honest configs (<4%)
-- Model only beats bookmaker on Fold 2; Fold 3 (unseen) is still below
-- Awaiting GPT response on whether draw prediction is viable or approach needs rethink
+## Model Positioning
+Path A: bookmaker probability calibration / confidence layer.
+- High-confidence selections (max_prob ≥ 0.65): ~79.9% accuracy on ~51% of matches (from pre-leakage eval, treat as indicative)
+- Not a market-beating draw predictor
+- Value: structured API wrapper around bookmaker signal with calibrated confidence scores
 
 ## Bugs Fixed This Session
 - **H2H SQL precedence bug** (`advanced_stats.py` line ~339): OR branches not wrapped in parens, so `AND date < ?` only filtered one direction. This caused future H2H data to leak in, inflating the old draw recall to 56%. Fixed by wrapping OR in parens.
@@ -65,3 +63,4 @@ At every major implementation step, frame a prompt for ChatGPT. Claude implement
 **2026-04-14** — Codex review: fixed H2H SQL precedence bug, rewrote app.py with caching.
 **2026-04-14** — SQL fix revealed old results were leaked. Honest Fold 2: 57.7% acc, 2.4% draw recall.
 **2026-04-14** — Added 7-season H2H context (1718/1819/1920 as context-only). Added home_draw_rate/away_draw_rate features. H2H coverage for 2122 improved from 48% to 16% at Laplace default. Best config (bm + all draw signals): Fold 2 = 60.2% acc, LL=0.9061 — marginally beats bookmaker. Draw recall still <4%.
+**2026-04-14** — Path A conclusion: no meaningful draw signal found. Retrained production on bookmaker-only (3 features, 1136 matches). Updated metadata with honest evaluation notes and leakage bug context. Deployed.

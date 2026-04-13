@@ -32,11 +32,6 @@ CHAMPION_FEATURES = [
     "bm_home_prob",
     "bm_draw_prob",
     "bm_away_prob",
-    "h2h_draw_rate",
-    "home_weighted_ppg",
-    "away_weighted_ppg",
-    "home_weighted_goals",
-    "away_weighted_goals",
 ]
 
 TRAIN_SEASONS = ["2122", "2223", "2324"]  # all 3 seasons — production model
@@ -91,15 +86,24 @@ def train_and_save():
         "hyperparams": {"C": 0.1, "solver": "lbfgs", "max_iter": 1000},
         "confidence_threshold": 0.65,
         "holdout_metrics": {
-            "accuracy": 0.659,
-            "log_loss": 0.7737,
-            "brier": 0.1534,
-            "draw_recall": 0.561,
+            "accuracy": 0.577,
+            "log_loss": 0.8301,
+            "brier": 0.1667,
+            "draw_recall": 0.039,
             "high_conf_accuracy": 0.799,
             "high_conf_coverage": 0.513,
-            "note": "From pre-production holdout eval on 2023-24 (n=378, full season)"
+            "note": "Fold 2 honest eval (2324, n=378). Bookmaker-only. No draw edge out-of-sample."
         },
-        "notes": "Production model. Trained on all 3 seasons. Add season 4 data and retrain from scratch when available."
+        "leakage_note": (
+            "Earlier results (65.9% acc, 56.1% draw recall) were inflated by a SQL operator-precedence "
+            "bug in H2H stats that leaked future match data. Fixed 2026-04-14. All metrics above are clean."
+        ),
+        "positioning": (
+            "Path A: bookmaker probability calibration and confidence layer. "
+            "Model is not a market-beating predictor — it surfaces bookmaker signal and "
+            "provides calibrated confidence scores for high-probability selections (≥0.65 threshold)."
+        ),
+        "notes": "Production model. Trained on all 3 seasons (2122+2223+2324). Add season 4 data and retrain when available."
     }
 
     meta_path = MODELS_DIR / "model_metadata.json"

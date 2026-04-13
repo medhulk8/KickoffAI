@@ -204,25 +204,12 @@ def predict_match(match_id: int):
             st.error("No bookmaker odds available for this match")
             return None
 
-        wgt_calc = get_weighted_calc()
-        adv_calc = get_advanced_calc()
-        ml       = get_ml_predictor()
-
-        home_wf = wgt_calc.get_weighted_form(home, last_n=5, before_date=date)
-        away_wf = wgt_calc.get_weighted_form(away, last_n=5, before_date=date)
-        h2h     = adv_calc.get_head_to_head_stats(home, away, last_n=10, before_date=date)
-
-        h2h_draw_rate = compute_h2h_draw_rate(h2h)
+        ml = get_ml_predictor()
 
         features = {
-            "bm_home_prob":        match["avg_home_prob"],
-            "bm_draw_prob":        match["avg_draw_prob"],
-            "bm_away_prob":        match["avg_away_prob"],
-            "h2h_draw_rate":       h2h_draw_rate,
-            "home_weighted_ppg":   home_wf["weighted_points_per_game"],
-            "away_weighted_ppg":   away_wf["weighted_points_per_game"],
-            "home_weighted_goals": home_wf["weighted_goals_per_game"],
-            "away_weighted_goals": away_wf["weighted_goals_per_game"],
+            "bm_home_prob": match["avg_home_prob"],
+            "bm_draw_prob": match["avg_draw_prob"],
+            "bm_away_prob": match["avg_away_prob"],
         }
 
         result = ml.predict(features)
@@ -237,10 +224,7 @@ def predict_match(match_id: int):
                 "confidence":  result["confidence"],
                 "reasoning": (
                     f"ML model ({result['model_version']}) — "
-                    f"Bookmaker: {features['bm_home_prob']:.0%} / {features['bm_draw_prob']:.0%} / {features['bm_away_prob']:.0%} | "
-                    f"H2H draw rate: {h2h_draw_rate:.0%} | "
-                    f"Home wPPG: {home_wf['weighted_points_per_game']:.2f} | "
-                    f"Away wPPG: {away_wf['weighted_points_per_game']:.2f}"
+                    f"Bookmaker: {features['bm_home_prob']:.0%} / {features['bm_draw_prob']:.0%} / {features['bm_away_prob']:.0%}"
                 ),
             },
             "evaluation": {
