@@ -201,6 +201,34 @@ class HeuristicDrawBaseline:
         return p / p.sum(axis=1, keepdims=True)
 
 
+class HeuristicDrawProbBaseline:
+    """
+    Probability-adjusted heuristic: when draw_likelihood >= threshold,
+    boost draw probability to max(bm_draw, draw_likelihood * 0.5) and
+    renormalize. Label is argmax of adjusted probabilities.
+    """
+
+    def __init__(self, draw_threshold: float = 0.7):
+        self.draw_threshold = draw_threshold
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        p = X[["bm_away_prob", "bm_draw_prob", "bm_home_prob"]].values.copy()
+        p = p / p.sum(axis=1, keepdims=True)
+        dl = X["draw_likelihood"].values
+        draw_mask = dl >= self.draw_threshold
+        boosted = np.maximum(p[draw_mask, 1], dl[draw_mask] * 0.5)
+        boosted = np.minimum(boosted, 0.55)
+        non_draw = p[draw_mask, 0] + p[draw_mask, 2]
+        scale = np.where(non_draw > 0, (1 - boosted) / non_draw, 0.5)
+        p[draw_mask, 0] *= scale
+        p[draw_mask, 2] *= scale
+        p[draw_mask, 1] = boosted
+        return p / p.sum(axis=1, keepdims=True)
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return np.array(CLASSES)[self.predict_proba(X).argmax(axis=1)]
+
+
 # ============================================================================
 # Runner
 # ============================================================================
@@ -242,6 +270,36 @@ def run_backtest(models: dict[str, Any], df: pd.DataFrame) -> dict[str, list[dic
 
 
 # ============================================================================
+# Confidence threshold sweep
+# ============================================================================
+
+def confidence_sweep(
+    y_true: np.ndarray,
+    y_pred_proba: np.ndarray,
+    thresholds: list[float] = [0.50, 0.55, 0.60, 0.65, 0.70],
+) -> None:
+    """Print accuracy and coverage at each confidence threshold."""
+    le = LabelEncoder()
+    le.fit(CLASSES)
+    y_true_enc = le.transform(y_true)
+    y_pred_labels = np.array(CLASSES)[y_pred_proba.argmax(axis=1)]
+    y_pred_enc = le.transform(y_pred_labels)
+    max_prob = y_pred_proba.max(axis=1)
+    n = len(y_true)
+
+    print(f"\n  Confidence threshold sweep:")
+    print(f"  {'Threshold':>10}  {'Coverage':>10}  {'Accuracy':>10}")
+    for t in thresholds:
+        mask = max_prob >= t
+        coverage = mask.sum() / n
+        if mask.sum() > 0:
+            acc = accuracy_score(y_true_enc[mask], y_pred_enc[mask])
+            print(f"  {t:>10.2f}  {coverage:>10.1%}  {acc:>10.1%}  (n={mask.sum()})")
+        else:
+            print(f"  {t:>10.2f}  {coverage:>10.1%}  {'N/A':>10}")
+
+
+# ============================================================================
 # Entry point
 # ============================================================================
 
@@ -249,22 +307,59 @@ if __name__ == "__main__":
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.pipeline import Pipeline
+    import lightgbm as lgb
 
     df = load_data()
     print(f"Loaded {len(df)} rows. Seasons: {sorted(df['season'].unique())}")
 
+    lr_pipeline = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", LogisticRegression(
+            solver="lbfgs",
+            C=0.1,
+            max_iter=1000,
+            random_state=42,
+        )),
+    ])
+
+    lgbm_model = lgb.LGBMClassifier(
+        objective="multiclass",
+        num_class=3,
+        max_depth=3,
+        num_leaves=7,
+        min_child_samples=60,
+        learning_rate=0.03,
+        feature_fraction=0.8,
+        bagging_fraction=0.8,
+        bagging_freq=1,
+        n_estimators=300,
+        random_state=42,
+        verbose=-1,
+    )
+
     models = {
-        "Bookmaker Baseline": BookmakerBaseline(),
-        "Heuristic Draw (0.7)": HeuristicDrawBaseline(draw_threshold=0.7),
-        "Logistic Regression": Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(
-                solver="lbfgs",
-                C=0.1,
-                max_iter=1000,
-                random_state=42,
-            )),
-        ]),
+        "Bookmaker Baseline":        BookmakerBaseline(),
+        "Heuristic Draw (label)":    HeuristicDrawBaseline(draw_threshold=0.7),
+        "Heuristic Draw (prob)":     HeuristicDrawProbBaseline(draw_threshold=0.7),
+        "Logistic Regression":       lr_pipeline,
+        "LightGBM":                  lgbm_model,
     }
 
     results = run_backtest(models, df)
+
+    # Confidence sweep on Fold 2 (most recent, most important)
+    print("\n\n=== CONFIDENCE SWEEP — Fold 2 ===")
+    fold2_train, fold2_test = get_fold_data(df, FOLDS[1])
+    X_f2 = fold2_test[FEATURE_COLS]
+    y_f2 = fold2_test[LABEL_COL].values
+
+    lr_pipeline.fit(fold2_train[FEATURE_COLS], fold2_train[LABEL_COL].values)
+    print("\nLogistic Regression:")
+    confidence_sweep(y_f2, lr_pipeline.predict_proba(X_f2))
+
+    lgbm_model.fit(
+        fold2_train[FEATURE_COLS], fold2_train[LABEL_COL].values,
+        categorical_feature="auto"
+    )
+    print("\nLightGBM:")
+    confidence_sweep(y_f2, lgbm_model.predict_proba(X_f2))
