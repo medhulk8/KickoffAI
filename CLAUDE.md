@@ -1,8 +1,8 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**Phase: ML model trained and ablated. Champion model identified. Next: wire into app.**
-LR model beats bookmakers (65% vs 57.7%, 63% draw recall vs 0%). Feature set locked.
+**Phase: PRODUCTION MODEL DEPLOYED. ML fully replaces LLM in LangGraph workflow.**
+LR model trained on all 3 seasons (941 matches). Validated end-to-end. Ready for live predictions.
 
 ## What This Project Does
 Predicts Premier League match outcomes (H/D/A) with probabilities.
@@ -38,10 +38,14 @@ Goal: replace LLM predictor node in LangGraph with trained ML model. Keep everyt
 - High-conf accuracy @ 0.65: 76.8% on 58% of matches
 
 ## Next Session Priority
-Validate end-to-end app path on one known historical match:
-- Run the Streamlit app or workflow on a 2023-24 match and confirm ML prediction fires correctly
-- Check logs for feature values and output probs
-- Then: retrain on all 3 seasons once integration is confirmed stable (`src/ml/train_final.py` — change TRAIN_SEASONS to include "2324")
+When season 4 data is available:
+1. Download new CSV from football-data.co.uk, run `src/data/load_data.py`
+2. Rebuild dataset: `src/ml/build_dataset.py`
+3. Rerun backtests: `src/ml/backtest.py` (add new fold)
+4. Retrain from scratch: `src/ml/train_final.py` (all seasons)
+5. Sanity check: schema, parity, distribution checks
+
+Otherwise next focus: test the Streamlit app with live match predictions.
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT asking for clarifications or review. Claude implements, GPT reviews/advises, user relays responses.
@@ -53,3 +57,4 @@ At every major implementation step, frame a prompt for ChatGPT asking for clarif
 **2026-04-14** — Built backtesting framework. LR: 65% acc, 60% draw recall, LL=0.745. LightGBM: 59.8% — loses on all metrics, dropped. Confidence sweep: 0.65 threshold chosen.
 **2026-04-14** — Feature ablations complete. h2h_draw_rate is critical. draw_likelihood and def_solidity dropped. Champion: 8 features (bm probs + h2h_draw_rate + weighted form). Results stable across both folds.
 **2026-04-14** — Trained champion model on 2122+2223, holdout 2324: 65% acc, 63% draw recall, LL=0.748. Saved to models/lr_champion.pkl + model_metadata.json. Built MLPredictor inference wrapper with validation. Wired ml_predictor_node into LangGraph (llm_predictor kept but unwired). Smoke test passed.
+**2026-04-14** — Fixed h2h_draw_rate with Laplace smoothing (α=1), capped max output prob at 92%. End-to-end validation passed on 3 known matches. Retrained production model on all 3 seasons (941 matches). Schema/behavior/validation checks all pass.
