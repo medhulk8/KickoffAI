@@ -39,8 +39,8 @@ CHAMPION_FEATURES = [
     "away_weighted_goals",
 ]
 
-TRAIN_SEASONS = ["2122", "2223"]
-HOLDOUT_SEASON = "2324"
+TRAIN_SEASONS = ["2122", "2223", "2324"]  # all 3 seasons — production model
+HOLDOUT_SEASON = None  # no holdout for production retrain
 CLASSES = ["A", "D", "H"]
 
 
@@ -60,32 +60,15 @@ def train_and_save():
     df = load_data()
 
     train_df = df[df["season"].isin(TRAIN_SEASONS)]
-    holdout_df = df[df["season"] == HOLDOUT_SEASON]
 
     print(f"Training on seasons {TRAIN_SEASONS}: {len(train_df)} matches")
-    print(f"Holdout ({HOLDOUT_SEASON}): {len(holdout_df)} matches")
+    print("No holdout — production model trained on all available data.")
 
     X_train = train_df[CHAMPION_FEATURES]
     y_train = train_df["result"].values
-    X_holdout = holdout_df[CHAMPION_FEATURES]
-    y_holdout = holdout_df["result"].values
 
     model = build_model()
     model.fit(X_train, y_train)
-
-    # Evaluate on holdout
-    preds = model.predict(X_holdout)
-    probas = model.predict_proba(X_holdout)
-
-    # Align proba columns to [A, D, H]
-    le_classes = model.named_steps["clf"].classes_
-    class_order = {c: i for i, c in enumerate(le_classes)}
-    aligned = np.zeros((len(probas), 3))
-    for i, cls in enumerate(CLASSES):
-        aligned[:, i] = probas[:, class_order[cls]]
-
-    m = compute_metrics(y_holdout, preds, aligned, name="Champion LR — Holdout 2023-24")
-    print_metrics(m)
 
     # Save model
     model_path = MODELS_DIR / "lr_champion.pkl"
@@ -102,18 +85,19 @@ def train_and_save():
         "n_features": len(CHAMPION_FEATURES),
         "classes": CLASSES,              # [A, D, H] — alphabetical
         "train_seasons": TRAIN_SEASONS,
-        "holdout_season": HOLDOUT_SEASON,
+        "holdout_season": None,
         "train_n": len(train_df),
         "training_date": str(date.today()),
         "hyperparams": {"C": 0.1, "solver": "lbfgs", "max_iter": 1000},
         "confidence_threshold": 0.65,
         "holdout_metrics": {
-            "accuracy": m["accuracy"],
-            "log_loss": m["log_loss"],
-            "brier": m["brier"],
-            "draw_recall": m["draw_recall"],
+            "accuracy": 0.655,
+            "log_loss": 0.770,
+            "brier": 0.154,
+            "draw_recall": 0.629,
+            "note": "From pre-production holdout eval on 2023-24 (n=194)"
         },
-        "notes": "Retrain on all 3 seasons before live deployment."
+        "notes": "Production model. Trained on all 3 seasons. Add season 4 data and retrain from scratch when available."
     }
 
     meta_path = MODELS_DIR / "model_metadata.json"
