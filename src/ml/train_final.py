@@ -91,11 +91,13 @@ def train_and_save():
         "hyperparams": {"C": 0.1, "solver": "lbfgs", "max_iter": 1000},
         "confidence_threshold": 0.65,
         "holdout_metrics": {
-            "accuracy": 0.655,
-            "log_loss": 0.770,
-            "brier": 0.154,
-            "draw_recall": 0.629,
-            "note": "From pre-production holdout eval on 2023-24 (n=194)"
+            "accuracy": 0.659,
+            "log_loss": 0.7737,
+            "brier": 0.1534,
+            "draw_recall": 0.561,
+            "high_conf_accuracy": 0.799,
+            "high_conf_coverage": 0.513,
+            "note": "From pre-production holdout eval on 2023-24 (n=378, full season)"
         },
         "notes": "Production model. Trained on all 3 seasons. Add season 4 data and retrain from scratch when available."
     }
