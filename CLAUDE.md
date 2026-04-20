@@ -86,8 +86,18 @@ Draw recall = 0% across all models (structural — features describe strength, n
 - Phase 2B (venue-split Elo): ❌ Negative — 0.936 corr with unified Elo, noisier, LL degrades
 - Phase 2C (isotonic calibration): ❌ Negative — worse than sigmoid on both metrics
 
-### Next Steps — TBD
-All planned experiments exhausted. V4 (49.7%) now beats bookmaker (48.6%) on 2526. Next gains likely require genuinely new data (live lineups, pre-match odds movement, referee data).
+### Ceiling Assessment — Free Historical Data Exhausted
+V4 (49.7%) already beats bookmaker (48.6%) on 2526. GPT assessment: with free team-level match stats, we are likely close to the ceiling. We've already implemented the most plausible "historical-only" improvement (recency-aware training — rolling-origin backtest confirmed Last 5 is optimal). Further meaningful gains require genuinely new information classes:
+
+**Paths requiring new data (in priority order):**
+1. **Historical lineup/availability data** (paid) — API-Football, SportsDataIO. Strongest new signal class.
+2. **Richer event data** (paid) — shot location buckets, big chances, set-piece vs open-play xG, pressing proxies. Not just match-level xG averages.
+3. **Odds movement data** — pre-match line movement. Real signal but changes project goal (no longer independent).
+
+**What to do next without new data:**
+- Live deployment and validation on 2026-27 season
+- Seasonal retraining each August (retrain on Last 5 seasons as new season starts)
+- V4 is the production model — no further feature hunting on free stats
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT. Claude implements, GPT reviews.
