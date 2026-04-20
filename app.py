@@ -14,6 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT_PATH))
 
 import csv
 from src.ml.v3_predictor import V3Predictor
+from src.ml.v4_predictor import V4Predictor
 from src.ml.injury_extractor import InjuryExtractor
 from src.ml.injury_adjuster import adjust_probabilities
 from src.ml.ou_ranker import OUranker
@@ -102,6 +103,10 @@ DB_PATH = PROJECT_ROOT / "data" / "processed" / "asil.db"
 @st.cache_resource
 def get_v3_predictor():
     return V3Predictor()
+
+@st.cache_resource
+def get_v4_predictor():
+    return V4Predictor()
 
 @st.cache_resource
 def get_injury_extractor():
@@ -404,9 +409,12 @@ if mode == "Live / Custom Match":
             a = away_team.strip()
             date_str = match_date.strftime("%Y-%m-%d")
 
-            # ── H/D/A — V3 model (lineup-aware when xi_diff provided) ─────────
+            # ── H/D/A: V4 base model, or V3 lineup-aware when xi_diff provided ──
             try:
-                hda = get_v3_predictor().predict(h, a, date_str, xi_strength_diff=xi_diff)
+                if xi_diff is not None:
+                    hda = get_v3_predictor().predict(h, a, date_str, xi_strength_diff=xi_diff)
+                else:
+                    hda = get_v4_predictor().predict(h, a, date_str)
             except Exception as e:
                 st.error(f"Prediction failed: {e}")
                 st.stop()
@@ -457,10 +465,16 @@ if mode == "Live / Custom Match":
 
             st.markdown("### 🎯 H/D/A Prediction")
             _display_probs(home_prob, draw_prob, away_prob, hda["confidence"])
-            model_label = "v3-lineup (3-season)" if hda["model_version"] == "v3_lineup" else "v3-independent (7-season)"
+            if hda["model_version"] == "v3_lineup":
+                model_label = "v3-lineup (3-season, experimental)"
+            elif hda["model_version"] == "v4":
+                model_label = "v4 (26-feat: EWM + opp quality, Last 5 seasons)"
+            else:
+                model_label = "v3-independent (7-season)"
             st.caption(
                 f"Model: {model_label} — ELO diff: {hda['features']['elo_diff']:+.0f} | "
-                f"PPG diff: {hda['features']['ppg_diff']:+.2f} | Rank diff: {hda['features']['rank_diff']:+.0f}"
+                f"PPG diff: {hda['features']['ppg_diff']:+.2f} | "
+                f"Rank diff: {hda['features']['rank_diff']:+.0f}"
             )
 
             # Key features expander
@@ -475,8 +489,12 @@ if mode == "Live / Custom Match":
                     ("Rank mean (match quality)", feats["rank_mean"]),
                     ("Home SOT L5", feats["home_sot_l5"]),
                     ("Away SOT L5", feats["away_sot_l5"]),
-                    ("Home pts momentum", feats["home_pts_momentum"]),
-                    ("Away pts momentum", feats["away_pts_momentum"]),
+                    ("Home pts EWM" if "home_pts_ewm" in feats else "Home pts momentum",
+                     feats.get("home_pts_ewm", feats.get("home_pts_momentum"))),
+                    ("Away pts EWM" if "away_pts_ewm" in feats else "Away pts momentum",
+                     feats.get("away_pts_ewm", feats.get("away_pts_momentum"))),
+                    ("Home opp PPG L5", feats.get("home_opp_ppg_l5", "—")),
+                    ("Away opp PPG L5", feats.get("away_opp_ppg_l5", "—")),
                     ("GD/game diff", feats["gd_pg_diff"]),
                 ]
                 if "xi_strength_diff" in feats:
