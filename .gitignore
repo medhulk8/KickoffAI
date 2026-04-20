@@ -95,3 +95,6 @@ mcp_server.log
 # Claude Code CLI metadata
 .claude/
 
+# Claude project instructions (local only)
+CLAUDE.md
+

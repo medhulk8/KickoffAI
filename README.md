@@ -1,255 +1,226 @@
-# KickoffAI: Football Match Prediction Engine
+# KickoffAI
 
-**AI-Powered Football Match Prediction System with Knowledge Graph & LLM Integration**
+**Premier League match outcome prediction using calibrated logistic regression and a leakage-safe feature pipeline.**
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-green.svg)](https://langchain-ai.github.io/langgraph/)
-[![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-orange.svg)](https://ollama.ai/)
-
----
-
-## 🎯 Overview
-
-KickoffAI is a sophisticated football match prediction system that combines:
-- **Dynamic Knowledge Graph** for tactical pattern recognition
-- **Local LLMs** (via Ollama) for intelligent analysis
-- **Web Search RAG** (disabled by default - degrades accuracy)
-- **Advanced Statistics** from historical data
-- **Ensemble Prediction** for improved calibration
-
-**Current Performance:**
-- **56.7% Overall Accuracy** (+3.3% vs baseline)
-- **70% Web Search Disabled** (4x faster predictions)
-- **66.7% High-Confidence Accuracy**
-- **0.6 avg web searches** (down from 2.0)
-- **~10-15s per prediction** (down from ~60s)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-app-red.svg)](https://streamlit.io/)
+[![SQLite](https://img.shields.io/badge/data-SQLite-lightgrey.svg)](https://www.sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 🚀 Quick Start
+## What it does
 
-### Prerequisites
+KickoffAI predicts the outcome of Premier League matches — Home win, Draw, or Away win — as calibrated probabilities. It uses only free, publicly available match statistics (no bookmaker odds, no paid data), yet outperforms the Bet365 implied baseline on a fully withheld 2025-26 season holdout.
 
-```bash
-# Python 3.8+
-python --version
+The model is a calibrated logistic regression trained on 26 hand-engineered pre-match features derived from a SQLite database of 2,957 historical matches spanning eight seasons (2017–2026).
 
-# Ollama (for local LLM)
-ollama pull llama3.1:8b
+---
 
-# Optional: Additional models for ensemble
-ollama pull mistral:7b
-ollama pull phi3:14b
+## Results
+
+| Model | Accuracy | Log-Loss |
+|---|---|---|
+| Bet365 bookmaker (implied) | 48.6% | 1.0255 |
+| **KickoffAI V4 (production)** | **49.7%** | **1.0248** |
+
+Evaluated on a **permanent 2025-26 holdout** (318 matches) never seen during any training or tuning decision. Rolling-origin backtests across three held-out seasons confirm the Last-5-season training window as optimal.
+
+> Draw recall is structurally 0% — a known limitation. The 26 features describe team strength, not match balance.
+
+---
+
+## Feature Pipeline
+
+The model computes 26 pre-match signals per fixture, all derived without any information leakage (strict pre-match database snapshots):
+
+**Per team (home + away):**
+| Feature | Description |
+|---|---|
+| `sot_l5` | Venue-specific shots on target rolling avg (last 5) |
+| `sot_conceded_l5` | Venue-specific shots conceded rolling avg |
+| `conversion` | Laplace-smoothed goals per shot (last 5) |
+| `clean_sheet_l5` | Venue-specific clean sheet rate |
+| `pts_ewm` | EWMA points (span=7, α≈0.25) |
+| `goals_ewm` | EWMA goals scored |
+| `sot_ewm` | EWMA shots on target |
+| `days_rest` | Days since last match, capped at 30 |
+| `opp_ppg_l5` | Rolling avg PPG of last 5 opponents faced |
+
+**Shared:**
+| Feature | Description |
+|---|---|
+| `elo_diff` | Unified Elo rating gap (K=20, home advantage=100) |
+| `ppg_diff / ppg_mean` | Season PPG differential and mean |
+| `gd_pg_diff / gd_pg_mean` | Goal difference per game differential and mean |
+| `rank_diff / rank_mean` | League rank differential and mean |
+| `matchweek` | Current matchweek |
+
+EWMA (span=7) replaced linear momentum after a span sensitivity test showed a synergistic interaction with opponent quality — neither feature improved accuracy in isolation, but together they gave the full +1.3pp gain over V3.
+
+---
+
+## Architecture
+
+```
+football-data.co.uk (E0.csv)
+        │
+        ▼
+  update_results.py  ──────────────────────────────────────────────┐
+  (weekly refresh)                                                  │
+                                                                    ▼
+                                                            data/processed/
+                                                               asil.db
+                                                           (2,957 matches,
+                                                            8 seasons)
+                                                                    │
+                     FPL API                                        │
+                        │                                           │
+                        ▼                                           ▼
+              fetch_fixtures.py                            V4Predictor
+              (next GW fixtures)                   (rolling features from DB)
+                        │                                           │
+                        └──────────────────┬────────────────────────┘
+                                           │
+                                           ▼
+                                       app.py
+                               (Streamlit UI — predict
+                                upcoming or custom fixtures)
 ```
 
-### Installation
+---
+
+## Model
+
+```
+CalibratedClassifierCV(
+    Pipeline([
+        StandardScaler(),
+        LogisticRegression(C=1.0, max_iter=2000)
+    ]),
+    cv=5, method="sigmoid"
+)
+```
+
+- **Training window:** Last 5 seasons [2019-20, 2021-22, 2022-23, 2023-24, 2024-25]
+- **Holdout:** 2025-26 season — permanent, never touched during any experiment
+- **Calibration:** Sigmoid (5-fold cross-fit). Isotonic calibration tested and rejected.
+- **Classes:** H (home win), D (draw), A (away win)
+
+---
+
+## Experiments Closed
+
+Six modeling directions were tested and closed with ablation results:
+
+| Experiment | Outcome |
+|---|---|
+| xG features | Redundant with SOT. No gain. |
+| Dixon-Coles model | ρ ≈ −0.02, zero draw discrimination. Worse than LR. |
+| Lineup XI strength | +1% on 2024-25 did not replicate on 2025-26 holdout. |
+| Lineup cold-start fix | Rolling-10 xi_strength worse than season-to-date. |
+| Venue-split Elo | 0.936 correlation with unified Elo. Noisier, LL degrades. |
+| Isotonic calibration | Worse than sigmoid on both accuracy and log-loss. |
+
+---
+
+## Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/asil_project.git
-cd asil_project
+git clone https://github.com/medhulk8/KickoffAI.git
+cd KickoffAI
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Set up API keys
-export TAVILY_API_KEY="your_tavily_api_key"
+# Launch the prediction app
+streamlit run app.py
 ```
 
-### Basic Usage
-
-#### 🌐 Web Interface (Recommended)
+**To refresh match data before predicting:**
 
 ```bash
-# Launch Streamlit app
-streamlit run app.py
-
-# Opens in browser at http://localhost:8501
+python src/data/update_results.py
 ```
 
-#### 💻 Command Line Interface
-
-```python
-# Run batch evaluation
-python -m src.evaluation.batch_evaluator
-
-# Test specific matches
-python -m src.agent.hybrid_agent
-```
+This fetches the latest completed matches from football-data.co.uk (~1 week lag for shots-on-target data) and inserts any new rows into the database.
 
 ---
 
-## 📊 System Architecture
+## Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Match Prediction Request                 │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                ┌───────────▼───────────┐
-                │  LangGraph Workflow   │
-                └───────────┬───────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-┌───────▼────────┐  ┌──────▼──────┐  ┌────────▼────────┐
-│ Stats Database │  │  Knowledge  │  │  Web Search     │
-│  (Historical)  │  │    Graph    │  │  RAG (Current)  │
-└───────┬────────┘  └──────┬──────┘  └────────┬────────┘
-        │                   │                   │
-        └───────────────────┼───────────────────┘
-                            │
-                   ┌────────▼────────┐
-                   │   LLM Analysis  │
-                   │  (Ollama Local) │
-                   └────────┬────────┘
-                            │
-                 ┌──────────▼───────────┐
-                 │  Draw Detection &    │
-                 │ Confidence Scoring   │
-                 └──────────┬───────────┘
-                            │
-                  ┌─────────▼──────────┐
-                  │ Final Prediction   │
-                  │  (H/D/A + Probs)   │
-                  └────────────────────┘
-```
-
----
-
-## 🎓 Key Features
-
-### 1. Enhanced Draw Detection ✅
-- **Problem Solved:** Baseline predicts 0% of draws correctly
-- **Solution:** Aggressive thresholds + directive LLM warnings
-- **Result:** 33.3% draw accuracy (vs 12.5% before)
-
-### 2. Minimal Search Strategy ✅
-- **Problem Solved:** Web searches were hurting accuracy (-18.5%)
-- **Solution:** Only search for time-sensitive info (injuries)
-- **Result:** 2 searches avg (vs 5), better accuracy
-
-### 3. Knowledge Graph Integration
-- **Tactical pattern recognition** from historical matches
-- **Style matchup analysis** (possession vs counter-attack, etc.)
-- **Confidence scoring** based on tactical intel quality
-
-### 4. Ensemble Prediction (Optional)
-- **Multiple models:** llama3.1:8b, mistral:7b, phi3:14b
-- **Better calibration:** +4.7% Brier score improvement
-- **Trade-off:** 5x slower but more reliable probabilities
-
----
-
-## 📁 Project Structure
-
-```
-asil_project/
-├── README.md                    # This file
-├── QUICK_START_IMPROVEMENTS.md  # Latest improvements guide
-├── requirements.txt             # Python dependencies
-├── LICENSE                      # MIT License
+KickoffAI/
+├── app.py                          # Streamlit prediction UI
+├── requirements.txt
 │
-├── docs/                        # Documentation
-│   ├── IMPROVEMENTS_IMPLEMENTED.md  # Phase 3/5/6 implementation
-│   ├── PHASE_3_5_6_SUMMARY.md       # Complete analysis
-│   ├── VALIDATION_RESULTS.md        # Test results
-│   └── kg/
-│       └── KNOWLEDGE_GRAPH_SUMMARY.md
+├── data/
+│   ├── processed/
+│   │   ├── asil.db                 # Main match database (8 seasons)
+│   │   ├── training_dataset_v4.csv # 2,957-row training set
+│   │   └── lineup_features.csv     # FPL-derived lineup data (experimental)
+│   └── raw/                        # Season CSVs from football-data.co.uk
 │
-├── data/                        # Data files
-│   ├── evaluation_results.csv  # Latest test results
-│   ├── cache/                   # Search cache
-│   └── processed/
-│       └── asil.db              # Main database
+├── models/
+│   ├── lr_v4_final.pkl             # Production model (26 features)
+│   ├── lr_v4_meta.json             # Holdout evaluation metadata
+│   └── lr_v3_lineup.pkl            # Experimental lineup model (25 features)
 │
-├── src/                         # Source code
-│   ├── agent/                   # Agent implementations
-│   ├── data/                    # Data loading & processing
-│   ├── evaluation/              # Evaluation tools
-│   ├── kg/                      # Knowledge graph
-│   ├── rag/                     # Web search RAG
-│   └── workflows/               # LangGraph workflows
-│
-├── tests/                       # Test files
-│   └── archived/                # Old test files
-│
-└── scripts/                     # Utility scripts
-    └── run_evaluation.py        # Run batch evaluation
+└── src/
+    ├── data/
+    │   ├── update_results.py       # Pull latest results from football-data.co.uk
+    │   ├── fetch_fixtures.py       # Upcoming GW fixtures from FPL API
+    │   ├── fetch_fpl_lineups.py    # Build lineup_features.csv from FPL GitHub
+    │   ├── load_data.py            # Initial DB population
+    │   └── schema.sql              # SQLite schema
+    │
+    └── ml/
+        ├── build_dataset_v4.py     # Feature engineering pipeline
+        ├── train_v4_final.py       # Model training
+        ├── v4_predictor.py         # Live inference (V4)
+        ├── v3_predictor.py         # Live inference (V3 + lineup)
+        ├── elo.py                  # Elo rating calculator
+        ├── injury_extractor.py     # Tavily + Ollama injury parser (optional)
+        ├── injury_adjuster.py      # Post-hoc probability adjustment (optional)
+        └── ou_ranker.py            # O/U 2.5 ranker (paused)
 ```
 
 ---
 
-## 📈 Performance Metrics
+## Live Prediction Workflow
 
-### Latest Results (99 matches)
+1. **Update the database** — run `update_results.py` to pull the latest completed matches (≈ weekly)
+2. **Open the app** — `streamlit run app.py`
+3. **Load upcoming fixtures** — click "Load Upcoming GW Fixtures" to auto-populate from the FPL API
+4. **Select a match and predict** — V4Predictor queries rolling features from the DB and returns H/D/A probabilities
 
-| Metric | Baseline | KickoffAI | Improvement |
-|--------|----------|------|-------------|
-| **Overall Accuracy** | 58.6% | 56.6% | -2.0% |
-| **Draw Accuracy** | 0.0% | **33.3%** | **+33.3%** ✅ |
-| **Home Win Accuracy** | 85.4% | 70.8% | -14.6% |
-| **Away Win Accuracy** | 63.0% | 51.9% | -11.1% |
-| **High Conf Accuracy** | - | **75.0%** | ✅ |
-
-**Key Insight:** KickoffAI trades some home/away accuracy to correctly predict draws (which baseline completely misses). For betting/high-stakes scenarios, this is more valuable.
+Optionally, enable the injury layer (requires Ollama running locally and a Tavily API key), which applies a heuristic ±6% probability shift based on parsed injury news.
 
 ---
 
-## 🔧 Configuration
+## Seasonal Retraining
 
-### Model Selection
-```python
-# Single model (fast)
-workflow = build_prediction_graph(
-    ollama_model="llama3.1:8b",
-    use_ensemble=False
-)
+Each August, slide the training window forward and retrain:
 
-# Ensemble (better calibration)
-workflow = build_prediction_graph(
-    use_ensemble=True
-)
+```bash
+# Deletes and rebuilds training_dataset_v4.csv, saves new model pkl
+python src/ml/train_v4_final.py
 ```
 
-### Search Strategy
-```python
-# Minimal (recommended, 1-2 searches)
-context = web_rag.get_match_context(
-    home_team, away_team,
-    strategy="minimal"  # Default
-)
-```
+The window shifts from [1920, 2122, 2223, 2324, 2425] to [2122, 2223, 2324, 2425, 2526], keeping exactly 5 seasons to balance recency and sample size (confirmed optimal by rolling-origin backtest).
 
 ---
 
-## 📚 Documentation
+## Data Sources
 
-- **[Quick Start Guide](QUICK_START_IMPROVEMENTS.md)** - Get started quickly
-- **[Implementation Details](docs/IMPROVEMENTS_IMPLEMENTED.md)** - Technical deep dive
-- **[Complete Analysis](docs/PHASE_3_5_6_SUMMARY.md)** - Full evaluation
-- **[Validation Results](docs/VALIDATION_RESULTS.md)** - Test results
-- **[Knowledge Graph Guide](docs/kg/KNOWLEDGE_GRAPH_SUMMARY.md)** - KG documentation
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+| Source | What it provides | Lag |
+|---|---|---|
+| [football-data.co.uk](https://www.football-data.co.uk/) | Results, goals, shots, corners, odds | ~1 week |
+| [FPL API](https://fantasy.premierleague.com/api/) | Upcoming fixtures, team names | Real-time |
+| [FPL GitHub (vaastav)](https://github.com/vaastav/Fantasy-Premier-League) | Historical GW data for lineup features | End of season |
 
 ---
 
-## 🙏 Acknowledgments
+## License
 
-- **LangGraph** for the workflow framework
-- **Ollama** for local LLM inference
-- **Tavily** for web search API
-- **Premier League** data sources
-
----
-
-**Built with ❤️ using LangGraph, Ollama, and Python**
+MIT — see [LICENSE](LICENSE).
