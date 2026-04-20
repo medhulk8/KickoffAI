@@ -1,41 +1,42 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**V3 independent H/D/A model deployed** — no bookmaker odds, pure match-fact features.
-Training: Last 5 seasons [1920, 2122, 2223, 2324, 2425]. Holdout 2526: **48.4% acc / LL=1.0258** (bookmaker: 48.6% / LL=1.0255 — essentially matched with no odds input).
+**V4 model deployed** — 26 features, EWM form + opponent quality. 2526 holdout: **49.7% acc / LL=1.0248** (+1.3% acc vs V3, vs bookmaker 48.6%).
+Training: Last 5 seasons [1920, 2122, 2223, 2324, 2425]. 2526 is permanent holdout.
 
 ## What This Project Does
 Predicts Premier League match outcomes (H/D/A) with calibrated probabilities. Pure match-statistics model, no bookmaker odds used.
 
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
-- ML: `src/ml/` — build_dataset_v3.py, backtest_v3.py, train_v3_final.py, v3_predictor.py, elo.py, backtest_rolling.py, backtest_lineup.py, train_v3_lineup.py, injury_extractor.py, injury_adjuster.py, live_features.py
+- ML: `src/ml/` — build_dataset_v4.py, backtest_v4.py, train_v4_final.py, v4_predictor.py, elo.py, backtest_rolling.py, backtest_lineup.py, train_v3_lineup.py, injury_extractor.py, injury_adjuster.py, live_features.py
 - Data: `src/data/` — fetch_fpl_lineups.py (FPL GitHub lineup/xG), fetch_fpl_xg.py
-- Models: `models/lr_v3_final.pkl` (V3, 24 features, Last 5 seasons), `models/lr_v3_lineup.pkl` (25 features, 3 seasons)
+- Models: `models/lr_v4_final.pkl` (V4, 26 features, Last 5 seasons), `models/lr_v3_lineup.pkl` (25 features, 3 seasons, experimental)
 - DB: 8 seasons (1718–2526). **2526 is permanent holdout — never train on it.**
-- Processed: `data/processed/training_dataset_v3.csv` (2957 rows), `data/processed/lineup_features.csv` (1431 rows)
+- Processed: `data/processed/training_dataset_v4.csv` (2957 rows), `data/processed/lineup_features.csv` (1431 rows)
 
 ## Architecture
 - **Model:** CalibratedClassifierCV(Pipeline(StandardScaler + LR), cv=5, sigmoid)
 - **Training window:** Last 5 seasons [1920, 2122, 2223, 2324, 2425] — concept drift confirmed by rolling-origin backtest
 - **Holdout:** 2526 — permanent, never touched during training
-- **Routing:** V3Predictor routes to lineup model when `xi_strength_diff` kwarg provided, base otherwise
+- **Routing:** V4Predictor is default; V3Predictor + lineup model activates when `xi_strength_diff` passed in app
 - Strict time-based splits only, no shuffling
 
-## V3 Feature Set (24 features)
+## V4 Feature Set (26 features)
 Per team (home + away ×2):
 - `sot_l5`, `sot_conceded_l5` — venue-specific rolling
 - `conversion` — Laplace-smoothed goals/SOT
 - `clean_sheet_l5` — venue-specific rolling
-- `pts_momentum`, `goals_momentum`, `sot_momentum` — l3 minus l5 trajectory
+- `pts_ewm`, `goals_ewm`, `sot_ewm` — EWMA(span=7), replaces l3-l5 linear momentum
 - `days_rest` — capped at 30
+- `opp_ppg_l5` — rolling avg PPG of last 5 opponents (schedule difficulty)
 
 Shared:
 - `elo_diff` — home_elo − away_elo (K=20, home_adv=100)
 - `ppg_diff`, `ppg_mean`, `gd_pg_diff`, `gd_pg_mean`, `rank_diff`, `rank_mean`
 - `matchweek`
 
-Lineup model adds: `xi_strength_diff` (home − away season-to-date minutes share of starting XI)
+Lineup model (V3, experimental): adds `xi_strength_diff` (home − away season-to-date minutes share of starting XI)
 
 ## Results
 
@@ -43,8 +44,9 @@ Lineup model adds: `xi_strength_diff` (home − away season-to-date minutes shar
 | Model | Acc | LL | Brier |
 |---|---|---|---|
 | Bookmaker (B365) | 48.6% | 1.0255 | — |
-| **LR V3 Last-5 (production)** | **48.4%** | **1.0258** | **0.6169** |
-| LR V3 + xi_strength_diff (lineup) | 49.3% | — | — |
+| LR V3 Last-5 (superseded) | 48.4% | 1.0258 | 0.6169 |
+| **LR V4 EWM + opp_ppg (production)** | **49.7%** | **1.0248** | **0.6165** |
+| LR V3 + xi_strength_diff (lineup, experimental) | 49.3% | — | — |
 
 ### Rolling-origin summary (3 holdouts: 2324, 2425, 2526)
 | Training window | Avg Acc | Avg LL |
@@ -69,17 +71,12 @@ Draw recall = 0% across all models (structural — features describe strength, n
 
 ## Next Steps (all testable on historical data, 2526 as holdout)
 
-### Phase 1 — Feature Engineering
-**1A. Opponent-quality weighted form**
-- Weight each team's last-5 SOT/goals by opponent PPG rank
-- Hypothesis: 3 shots vs Man City ≠ 3 shots vs Luton
-- New features: `home_sot_l5_quality`, `away_sot_l5_quality`
+### Phase 1 — Feature Engineering ✓ DONE
+**1A. Opponent quality (opp_ppg_l5)** — deployed in V4 ✓
+**1B. EWM form (span=7)** — deployed in V4, replaces linear momentum ✓
+- Key finding: neither alone moves accuracy; combination gives +1.3% (interaction effect)
 
-**1B. Exponential-weighted form**
-- Replace linear l3−l5 momentum with exponential decay (λ=0.5) over last 5 matches
-- More stable, less single-game noise sensitivity
-- Replaces current `pts_momentum`, `goals_momentum`, `sot_momentum`
-
+### Remaining Phase 1
 **1C. Lineup features — fix cold-start**
 - Current `xi_strength` = season-to-date minutes share → unreliable GW1–5
 - Fix: use last-10-matches minutes share instead
