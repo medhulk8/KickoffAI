@@ -110,6 +110,92 @@ class EloCalculator:
         return {team: round(r, 2) for team, r in sorted(ratings.items(), key=lambda x: -x[1])}
 
 
+class VenueEloCalculator:
+    """
+    Venue-split Elo: separate home/away ratings per team.
+
+    home_ratings[team] — updated only from that team's home games
+    away_ratings[team] — updated only from that team's away games
+
+    venue_elo_diff = home_ratings[home_team] - away_ratings[away_team]
+
+    No additional home_advantage constant — the venue-specific ratings naturally
+    diverge to reflect each team's home/away performance.
+    """
+
+    def __init__(self, k: float = 20.0, initial_elo: float = 1500.0):
+        self.k = k
+        self.initial_elo = initial_elo
+
+    def compute(self, matches: list[dict]) -> dict[int, dict]:
+        """
+        Returns: match_id -> {home_venue_elo, away_venue_elo, venue_elo_diff}
+        All values are pre-match.
+        """
+        home_ratings: dict[str, float] = {}
+        away_ratings: dict[str, float] = {}
+        elo_map: dict[int, dict] = {}
+
+        for match in matches:
+            home = match["home_team"]
+            away = match["away_team"]
+            mid  = match["match_id"]
+
+            r_home_h = home_ratings.get(home, self.initial_elo)  # home team's home elo
+            r_away_a = away_ratings.get(away, self.initial_elo)  # away team's away elo
+
+            elo_map[mid] = {
+                "home_venue_elo":  round(r_home_h, 2),
+                "away_venue_elo":  round(r_away_a, 2),
+                "venue_elo_diff":  round(r_home_h - r_away_a, 2),
+            }
+
+            result = match.get("result")
+            if result not in ("H", "D", "A"):
+                continue
+
+            e_home = 1.0 / (1.0 + 10.0 ** ((r_away_a - r_home_h) / 400.0))
+            e_away = 1.0 - e_home
+
+            if result == "H":
+                s_home, s_away = 1.0, 0.0
+            elif result == "D":
+                s_home, s_away = 0.5, 0.5
+            else:
+                s_home, s_away = 0.0, 1.0
+
+            home_ratings[home] = r_home_h + self.k * (s_home - e_home)
+            away_ratings[away] = r_away_a + self.k * (s_away - e_away)
+
+        return elo_map
+
+    def get_current_ratings(self, matches: list[dict]) -> dict[str, dict]:
+        """Return {team: {home_elo, away_elo}} after processing all matches."""
+        home_ratings: dict[str, float] = {}
+        away_ratings: dict[str, float] = {}
+        for match in matches:
+            home = match["home_team"]
+            away = match["away_team"]
+            r_h = home_ratings.get(home, self.initial_elo)
+            r_a = away_ratings.get(away, self.initial_elo)
+            result = match.get("result")
+            if result not in ("H", "D", "A"):
+                continue
+            e_home = 1.0 / (1.0 + 10.0 ** ((r_a - r_h) / 400.0))
+            s_home = 1.0 if result == "H" else (0.5 if result == "D" else 0.0)
+            s_away = 1.0 - s_home
+            home_ratings[home] = r_h + self.k * (s_home - e_home)
+            away_ratings[away] = r_a + self.k * (s_away - (1.0 - e_home))
+        all_teams = set(home_ratings) | set(away_ratings)
+        return {
+            t: {
+                "home_elo": round(home_ratings.get(t, self.initial_elo), 2),
+                "away_elo": round(away_ratings.get(t, self.initial_elo), 2),
+            }
+            for t in sorted(all_teams)
+        }
+
+
 if __name__ == "__main__":
     import sqlite3
     from pathlib import Path
