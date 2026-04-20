@@ -1,115 +1,108 @@
 # KickoffAI — CLAUDE.md
 
 ## Current Status
-**Two modules deployed:**
-1. **H/D/A predictor (Path A):** Bookmaker probability wrapper + confidence filter. No out-of-sample edge over bookmaker. V1+V2 closed.
-2. **O/U 2.5 ranker (experimental):** Ranking-first module. Top-20% slice hit 72% over rate (1.27x lift) on one unseen season. AUC gain not statistically proven. Paused pending more live data.
+**V3 independent H/D/A model deployed** — no bookmaker odds, pure match-fact features.
+Training: Last 5 seasons [1920, 2122, 2223, 2324, 2425]. Holdout 2526: **48.4% acc / LL=1.0258** (bookmaker: 48.6% / LL=1.0255 — essentially matched with no odds input).
 
 ## What This Project Does
-Predicts Premier League match outcomes (H/D/A) with probabilities.
-LLM predictor node in LangGraph replaced with trained ML model.
+Predicts Premier League match outcomes (H/D/A) with calibrated probabilities. Pure match-statistics model, no bookmaker odds used.
 
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
-- LangGraph workflow (`src/workflows/prediction_workflow.py`)
-- ML: `src/ml/` — build_dataset.py, backtest.py, ablations.py, train_final.py, predictor.py, elo.py, dixon_coles.py, dc_ablation.py, build_ou_dataset.py, ou_backtest.py, ou_ranker.py
-- Models: `models/lr_champion.pkl` (H/D/A), `models/ou_ranker.pkl` (O/U ranking)
-- DB: 7 seasons in DB (1718–2425), training on 2122–2324, holdout 2425
-- source: football-data.co.uk
+- ML: `src/ml/` — build_dataset_v3.py, backtest_v3.py, train_v3_final.py, v3_predictor.py, elo.py, backtest_rolling.py, backtest_lineup.py, train_v3_lineup.py, injury_extractor.py, injury_adjuster.py, live_features.py
+- Data: `src/data/` — fetch_fpl_lineups.py (FPL GitHub lineup/xG), fetch_fpl_xg.py
+- Models: `models/lr_v3_final.pkl` (V3, 24 features, Last 5 seasons), `models/lr_v3_lineup.pkl` (25 features, 3 seasons)
+- DB: 8 seasons (1718–2526). **2526 is permanent holdout — never train on it.**
+- Processed: `data/processed/training_dataset_v3.csv` (2957 rows), `data/processed/lineup_features.csv` (1431 rows)
 
-## DB State
-- Seasons in `asil.db`: 1718, 1819, 1920 (context only), 2122, 2223, 2324, 2425
-- 1718/1819/1920 are context-only for H2H feature computation — NOT used for training
-- Training dataset (`training_dataset.csv`): 1515 rows, seasons 2122/2223/2324/2425
+## Architecture
+- **Model:** CalibratedClassifierCV(Pipeline(StandardScaler + LR), cv=5, sigmoid)
+- **Training window:** Last 5 seasons [1920, 2122, 2223, 2324, 2425] — concept drift confirmed by rolling-origin backtest
+- **Holdout:** 2526 — permanent, never touched during training
+- **Routing:** V3Predictor routes to lineup model when `xi_strength_diff` kwarg provided, base otherwise
+- Strict time-based splits only, no shuffling
 
-## Architecture Decisions
-- Champion model: **Logistic Regression** (LightGBM lost on all metrics)
-- Strict time-based splits only — no shuffling
-- Confidence threshold: **0.65**
-- 3 folds: Fold 1 (→2223), Fold 2 (→2324), Fold 3 (→2425 holdout)
+## V3 Feature Set (24 features)
+Per team (home + away ×2):
+- `sot_l5`, `sot_conceded_l5` — venue-specific rolling
+- `conversion` — Laplace-smoothed goals/SOT
+- `clean_sheet_l5` — venue-specific rolling
+- `pts_momentum`, `goals_momentum`, `sot_momentum` — l3 minus l5 trajectory
+- `days_rest` — capped at 30
 
-## Production Feature Set (locked — Path A)
-`bm_home_prob, bm_draw_prob, bm_away_prob`
+Shared:
+- `elo_diff` — home_elo − away_elo (K=20, home_adv=100)
+- `ppg_diff`, `ppg_mean`, `gd_pg_diff`, `gd_pg_mean`, `rank_diff`, `rank_mean`
+- `matchweek`
 
-**Conclusion:** No draw edge found after exhaustive honest testing. H2H, team draw rates, weighted form, def_solidity, draw_likelihood — none produced meaningful draw recall (<4%) without leakage. Bookmaker-only is the cleanest honest model.
+Lineup model adds: `xi_strength_diff` (home − away season-to-date minutes share of starting XI)
 
-## Honest Results (post SQL fix)
-| Fold | Test | Bookmaker baseline | LR bookmaker-only |
+## Results
+
+### 2526 holdout — production model
+| Model | Acc | LL | Brier |
 |---|---|---|---|
-| Fold 1 | 2223 | 54.6% / LL=0.9724 / DrawR=0% | ~same |
-| Fold 2 | 2324 | 59.9% / LL=0.9119 | 57.7% / LL=0.8301 |
-| **Fold 3** | **2425 (canonical unseen)** | **54.1% / LL=0.9722** | **54.1% / LL=0.9788** |
+| Bookmaker (B365) | 48.6% | 1.0255 | — |
+| **LR V3 Last-5 (production)** | **48.4%** | **1.0258** | **0.6169** |
+| LR V3 + xi_strength_diff (lineup) | 49.3% | — | — |
 
-**Conclusion:** LR matches bookmaker baseline out-of-sample. No edge. Draw recall = 0% across all honest evals.
-
-## Confidence Thresholds (Fold 3, 2425)
-| Threshold | Coverage | Accuracy |
+### Rolling-origin summary (3 holdouts: 2324, 2425, 2526)
+| Training window | Avg Acc | Avg LL |
 |---|---|---|
-| 0.65 (default) | 29% | 69.4% |
-| 0.70 (strict) | 20% | 73.3% |
+| **Last 5 seasons** | **53.5%** | **0.9830** |
+| Full history | 53.6% | 0.9844 |
+| Last 3 seasons | 53.7% | 0.9874 |
 
-## O/U 2.5 Ranker (experimental module — paused)
-**Approach:** Ranking-first. LR on bookmaker O/U implied probability + rolling shot/goal features (last 5 matches). Percentile buckets, not probability thresholds.
+Draw recall = 0% across all models (structural — features describe strength, not balance).
 
-**Fold 3 (2425, unseen) results:**
-| Model | AUC | vs Bookmaker |
-|---|---|---|
-| Bookmaker O/U baseline | 0.569 | — |
-| LR bm O/U + shot features | 0.580 | +0.011 |
+## Closed Experiments (Negative Results)
+- **xG features** — redundant with SOT (signal already captured). Closed.
+- **Dixon-Coles** — worse than LR on all holdouts. rho≈-0.02, zero draw discrimination.
+- **Draw detection** — P(D) on actual draws (0.230) = P(D) on non-draws (0.227). Closeness features collinear, degrade acc. Closed.
+- **Lineup → 2526** — +1% on 2425 validation did not replicate on 2526 (-0.7%). More seasons needed.
+- **V2 Elo/Dixon-Coles** — no gain vs bookmaker odds. Bookmaker is effective ceiling without genuinely new data.
 
-**Bootstrap (10k resamples):** Mean diff +0.011, 95% CI [-0.013, +0.035] — CI crosses zero. Not statistically proven.
+## Experimental Modules (Deployed but Unvalidated)
+- **Lineup model** (`lr_v3_lineup.pkl`): activates when `xi_strength_diff` provided in UI. Unvalidated on 2526.
+- **Injury layer** (`injury_extractor.py` + `injury_adjuster.py`): Tavily → Ollama llama3.1:8b → post-hoc ±6% prob shift. Heuristic only. Requires: Ollama running locally, TAVILY_API_KEY.
+- **O/U 2.5 ranker** (`models/ou_ranker.pkl`): top-20% lift 1.27x but AUC CI crosses zero. Paused pending live data.
 
-**Top-decile lift:**
-| Bucket | n | Over rate | Lift |
-|---|---|---|---|
-| Top 10% | 37 | 75.7% | 1.33x |
-| Top 20% (main slice) | 75 | 72.0% | 1.27x |
+## Next Steps (all testable on historical data, 2526 as holdout)
 
-**Honest status:** AUC gain unproven at n=379. Top-20% lift is the most concrete signal found in the project. Calibration weaker than bookmaker — use percentile rank, not raw score. Next real test: live / 2025-26 season data.
+### Phase 1 — Feature Engineering
+**1A. Opponent-quality weighted form**
+- Weight each team's last-5 SOT/goals by opponent PPG rank
+- Hypothesis: 3 shots vs Man City ≠ 3 shots vs Luton
+- New features: `home_sot_l5_quality`, `away_sot_l5_quality`
 
-**Thresholds (from training distribution):** p80=0.6397 (top-20%), p90=0.6781 (top-10%)
+**1B. Exponential-weighted form**
+- Replace linear l3−l5 momentum with exponential decay (λ=0.5) over last 5 matches
+- More stable, less single-game noise sensitivity
+- Replaces current `pts_momentum`, `goals_momentum`, `sot_momentum`
 
-## V2 Experiments (clean negative results)
-Tested after V1 closure — all evaluated on Fold 3 (2425, unseen):
+**1C. Lineup features — fix cold-start**
+- Current `xi_strength` = season-to-date minutes share → unreliable GW1–5
+- Fix: use last-10-matches minutes share instead
+- Also test: binary `star_absent` flag (top-2 starters by minutes not in XI)
+- Rerun 2425 and 2526 holdout
 
-| Experiment | Fold 3 Acc | Fold 3 LL | vs Bookmaker |
-|---|---|---|---|
-| Elo (elo_diff feature) | 54.4% | 0.9787 | no gain |
-| Dixon-Coles pure | 49.9% | 1.0962 | worse |
-| Dixon-Coles + bookmaker LR | 51.2% | 0.9946 | worse |
+### Phase 2 — Model Architecture
+**2A. Soft ensemble**
+- Blend base + lineup: `probs = α * base + (1−α) * lineup`
+- α tuned on 2425 validation; α=1.0 when no lineup data
+- Better than hard routing
 
-**V2 conclusion:** bookmaker odds are the effective ceiling for this dataset. Elo is redundant (market already prices team strength). Dixon-Coles fails to beat the market — the available information is weaker than the bookmaker signal.
+**2B. Venue-split Elo**
+- Track separate home-Elo and away-Elo per team
+- Some teams massively overperform at home — current single Elo averages this out
 
-Draw recall = 0% across every V2 config. The rho correction does not produce meaningful draw probability mass above the decision threshold.
+**2C. Calibration: isotonic vs sigmoid**
+- Test isotonic calibration — may fit football's non-monotonic probability shape better
 
-**To move beyond this ceiling requires genuinely new information:** xG/shot quality, lineup/injury data, or timestamped odds movement. Without that, model variants only rearrange signal the market already has.
-
-## Model Positioning
-Bookmaker probability wrapper and confidence filter.
-- Does **not** show a reliable out-of-sample edge over bookmaker baseline
-- Draw prediction unresolved — 0% draw recall in all honest evaluations
-- Value: structured probability API with calibrated confidence tiers
-- **V1 + V2 modeling closed. Reopen only with richer data (xG, lineups, odds movement).**
-
-## Bugs Fixed This Session
-- **H2H SQL precedence bug** (`advanced_stats.py` line ~339): OR branches not wrapped in parens, so `AND date < ?` only filtered one direction. This caused future H2H data to leak in, inflating the old draw recall to 56%. Fixed by wrapping OR in parens.
-- **app.py rewritten**: bypasses MCP/LangGraph entirely, uses MLPredictor directly with `st.cache_resource`
-- **Codex review applied**: H2H SQL fix, app.py caching
+### Phase 3 — Live (only after Phase 1–2 validate)
+- Auto-fetch current GW lineups from FPL API
+- Automate rolling feature update post-matchday
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT. Claude implements, GPT reviews.
 **Always end GPT prompts with "Answer compactly." — user has limited tokens.**
-
-## Session Log
-**2026-04-14** — Planned ML replacement. Decisions locked. Plan in `ML_PLAN.md`.
-**2026-04-14** — Built dataset, backtest, ablations. LR champion chosen over LightGBM.
-**2026-04-14** — Trained production model (2122+2223+2324). MLPredictor wired into LangGraph.
-**2026-04-14** — Fixed data bug: 2023-24 had 184 missing odds rows. Patched, rebuilt, retrained.
-**2026-04-14** — Added 2024-25 season (E0_2425.csv). Fold 3 out-of-sample: 57.5% acc (inflated).
-**2026-04-14** — Codex review: fixed H2H SQL precedence bug, rewrote app.py with caching.
-**2026-04-14** — SQL fix revealed old results were leaked. Honest Fold 2: 57.7% acc, 2.4% draw recall.
-**2026-04-14** — Added 7-season H2H context (1718/1819/1920 as context-only). Added home_draw_rate/away_draw_rate features. H2H coverage for 2122 improved from 48% to 16% at Laplace default. Best config (bm + all draw signals): Fold 2 = 60.2% acc, LL=0.9061 — marginally beats bookmaker. Draw recall still <4%.
-**2026-04-14** — Path A conclusion: no meaningful draw signal found. Retrained production on bookmaker-only (3 features, 1136 matches). Updated metadata with honest evaluation notes and leakage bug context. Deployed.
-**2026-04-14** — Fold 3 canonical eval: 54.1% acc / LL=0.9788. LR matches bookmaker baseline on unseen season. Confidence sweep: 0.65→69.4% on 29%, 0.70→73.3% on 20%. Metadata updated. V1 modeling closed.
-**2026-04-14** — V2: Elo (elo_diff) — no gain, redundant with bookmaker odds. Dixon-Coles (pure + bookmaker calibration layer) — worse than bookmaker on Fold 3. Draw recall 0% throughout. V2 closed as clean negative result. Bookmaker odds are the effective ceiling without richer data.
-**2026-04-14** — O/U 2.5 module: ingested shots-on-target and bookmaker O/U odds. LR (bm O/U + shots) AUC=0.580 vs bookmaker 0.569 on Fold 3. Bootstrap CI crosses zero — unproven but interesting. Top-20% lift 1.27x. Built percentile ranker (ou_ranker.py). O/U v1 paused pending live data.

@@ -1,0 +1,38 @@
+{
+  "model": "lr_v3_lineup",
+  "features": [
+    "home_sot_l5",
+    "home_sot_conceded_l5",
+    "home_conversion",
+    "home_clean_sheet_l5",
+    "home_pts_momentum",
+    "home_goals_momentum",
+    "home_sot_momentum",
+    "home_days_rest",
+    "away_sot_l5",
+    "away_sot_conceded_l5",
+    "away_conversion",
+    "away_clean_sheet_l5",
+    "away_pts_momentum",
+    "away_goals_momentum",
+    "away_sot_momentum",
+    "away_days_rest",
+    "elo_diff",
+    "ppg_diff",
+    "ppg_mean",
+    "gd_pg_diff",
+    "gd_pg_mean",
+    "rank_diff",
+    "rank_mean",
+    "matchweek",
+    "xi_strength_diff"
+  ],
+  "n_features": 25,
+  "seasons": [
+    2223,
+    2324,
+    2425
+  ],
+  "n_train": 1137,
+  "note": "Lineup-aware variant. Use when confirmed xi_strength_diff is known."
+}
