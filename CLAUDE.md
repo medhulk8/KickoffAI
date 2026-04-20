@@ -58,10 +58,13 @@ Lineup model (V3, experimental): adds `xi_strength_diff` (home − away season-t
 Draw recall = 0% across all models (structural — features describe strength, not balance).
 
 ## Closed Experiments (Negative Results)
-- **xG features** — redundant with SOT (signal already captured). Closed.
-- **Dixon-Coles** — worse than LR on all holdouts. rho≈-0.02, zero draw discrimination.
-- **Draw detection** — P(D) on actual draws (0.230) = P(D) on non-draws (0.227). Closeness features collinear, degrade acc. Closed.
-- **Lineup → 2526** — +1% on 2425 validation did not replicate on 2526 (-0.7%). More seasons needed.
+- **xG features** — redundant with SOT. Closed.
+- **Dixon-Coles** — worse than LR. rho≈-0.02, zero draw discrimination. Closed.
+- **Draw detection** — P(D) on draws (0.230) = P(D) on non-draws (0.227). Features don't separate balanced matches. Closed.
+- **Lineup → 2526** — +1% on 2425 did not replicate. Lineup helps LL but hurts accuracy on 2526 subset.
+- **Lineup cold-start fix (Phase 1C)** — xi_strength_l10 (rolling-10) worse than season-to-date. star_absent_diff redundant with xi_s2d. Closed.
+- **Isotonic calibration (Phase 2C)** — worse than sigmoid on both acc and LL. Closed.
+- **Venue-split Elo (Phase 2B)** — 0.936 correlation with unified elo_diff. Noisier (19 games/rating vs 38). LL degrades. Closed.
 - **V2 Elo/Dixon-Coles** — no gain vs bookmaker odds. Bookmaker is effective ceiling without genuinely new data.
 
 ## Experimental Modules (Deployed but Unvalidated)
@@ -76,29 +79,15 @@ Draw recall = 0% across all models (structural — features describe strength, n
 **1B. EWM form (span=7)** — deployed in V4, replaces linear momentum ✓
 - Key finding: neither alone moves accuracy; combination gives +1.3% (interaction effect)
 
-### Remaining Phase 1
-**1C. Lineup features — fix cold-start**
-- Current `xi_strength` = season-to-date minutes share → unreliable GW1–5
-- Fix: use last-10-matches minutes share instead
-- Also test: binary `star_absent` flag (top-2 starters by minutes not in XI)
-- Rerun 2425 and 2526 holdout
+### Phase 1–2 Status — All completed
+- Phase 1A+B (EWM + opp_ppg): ✅ Deployed as V4 (+1.3% acc)
+- Phase 1C (lineup cold-start): ❌ Negative — xi_l10 worse than s2d, star_absent redundant
+- Phase 2A (soft ensemble): ⏭ Skipped — lineup doesn't improve accuracy
+- Phase 2B (venue-split Elo): ❌ Negative — 0.936 corr with unified Elo, noisier, LL degrades
+- Phase 2C (isotonic calibration): ❌ Negative — worse than sigmoid on both metrics
 
-### Phase 2 — Model Architecture
-**2A. Soft ensemble**
-- Blend base + lineup: `probs = α * base + (1−α) * lineup`
-- α tuned on 2425 validation; α=1.0 when no lineup data
-- Better than hard routing
-
-**2B. Venue-split Elo**
-- Track separate home-Elo and away-Elo per team
-- Some teams massively overperform at home — current single Elo averages this out
-
-**2C. Calibration: isotonic vs sigmoid**
-- Test isotonic calibration — may fit football's non-monotonic probability shape better
-
-### Phase 3 — Live (only after Phase 1–2 validate)
-- Auto-fetch current GW lineups from FPL API
-- Automate rolling feature update post-matchday
+### Next Steps — TBD
+All planned experiments exhausted. V4 (49.7%) now beats bookmaker (48.6%) on 2526. Next gains likely require genuinely new data (live lineups, pre-match odds movement, referee data).
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT. Claude implements, GPT reviews.
