@@ -28,7 +28,7 @@ from sklearn.preprocessing import StandardScaler
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-DATASET_PATH = PROJECT_ROOT / "data" / "processed" / "training_dataset_v3.csv"
+DATASET_PATH = PROJECT_ROOT / "data" / "processed" / "training_dataset_v4.csv"
 LINEUP_PATH  = PROJECT_ROOT / "data" / "processed" / "lineup_features.csv"
 MODEL_PATH   = PROJECT_ROOT / "models" / "lr_v3_lineup.pkl"
 META_PATH    = PROJECT_ROOT / "models" / "lr_v3_lineup_meta.json"

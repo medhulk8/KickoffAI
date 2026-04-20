@@ -9,8 +9,8 @@ Predicts Premier League match outcomes (H/D/A) with calibrated probabilities. Pu
 
 ## Stack
 - Python, SQLite (`data/processed/asil.db`), Streamlit (`app.py`)
-- ML: `src/ml/` — build_dataset_v4.py, backtest_v4.py, train_v4_final.py, v4_predictor.py, elo.py, backtest_rolling.py, backtest_lineup.py, train_v3_lineup.py, injury_extractor.py, injury_adjuster.py, live_features.py
-- Data: `src/data/` — fetch_fpl_lineups.py (FPL GitHub lineup/xG), fetch_fpl_xg.py
+- ML: `src/ml/` — build_dataset_v4.py, train_v4_final.py, v4_predictor.py, elo.py, v3_predictor.py, train_v3_lineup.py, injury_extractor.py, injury_adjuster.py, live_features.py, ou_ranker.py
+- Data: `src/data/` — fetch_fpl_lineups.py, load_data.py, schema.sql, verify_database.py, update_results.py, fetch_fixtures.py
 - Models: `models/lr_v4_final.pkl` (V4, 26 features, Last 5 seasons), `models/lr_v3_lineup.pkl` (25 features, 3 seasons, experimental)
 - DB: 8 seasons (1718–2526). **2526 is permanent holdout — never train on it.**
 - Processed: `data/processed/training_dataset_v4.csv` (2957 rows), `data/processed/lineup_features.csv` (1431 rows)
@@ -94,10 +94,34 @@ V4 (49.7%) already beats bookmaker (48.6%) on 2526. GPT assessment: with free te
 2. **Richer event data** (paid) — shot location buckets, big chances, set-piece vs open-play xG, pressing proxies. Not just match-level xG averages.
 3. **Odds movement data** — pre-match line movement. Real signal but changes project goal (no longer independent).
 
-**What to do next without new data:**
-- Live deployment and validation on 2026-27 season
-- Seasonal retraining each August (retrain on Last 5 seasons as new season starts)
-- V4 is the production model — no further feature hunting on free stats
+**What to do next without new data — Live Pipeline:**
+
+### Phase 3 — Live Data Pipeline (current)
+Free data source: **football-data.co.uk** (E0.csv per season). Provides same match stats the model was trained on (results, SOT). Lag: ~1 week behind real-time.
+
+**3A. Auto-update DB** (`src/data/update_results.py`) ✅ Built
+- Fetches latest E0.csv for current season from football-data.co.uk
+- Finds matches not yet in asil.db (by date + home_team + away_team)
+- Inserts new rows into `matches` table using same column mapping as load_data.py
+- Run manually or via cron before predicting
+
+**3B. Upcoming fixtures** (`src/data/fetch_fixtures.py`) ✅ Built
+- Hits FPL API (`bootstrap-static` + `fixtures`) for upcoming GW
+- Maps FPL team names to canonical DB names
+- Returns list of {home_team, away_team, date} for the next unfinished GW
+
+**3C. App UI** — "Load Upcoming Fixtures" button in `app.py` ✅ Built
+- Calls fetch_fixtures.py, auto-populates home/away dropdowns for next GW
+- User selects fixture, hits Predict
+
+**Live prediction workflow:**
+1. Run `python src/data/update_results.py` (pulls latest results ~weekly)
+2. Open app → Load Upcoming Fixtures → select match → Predict
+3. V4Predictor queries asil.db for rolling features — works as long as DB is ≤1 GW stale
+
+**Seasonal retraining (each August):**
+- Run `python src/ml/train_v4_final.py` (auto-rebuilds dataset, saves new pkl)
+- Training window slides forward: drop 1718, add 2526 → [2122,2223,2324,2425,2526]
 
 ## Collaboration Workflow
 At every major implementation step, frame a prompt for ChatGPT. Claude implements, GPT reviews.

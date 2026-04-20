@@ -19,6 +19,7 @@ from src.ml.injury_extractor import InjuryExtractor
 from src.ml.injury_adjuster import adjust_probabilities
 from src.ml.ou_ranker import OUranker
 from src.ml.live_features import compute_ou_features
+from src.data.fetch_fixtures import get_upcoming_fixtures
 
 LIVE_LOG_PATH = PROJECT_ROOT_PATH / "data" / "live_predictions.csv"
 _LOG_HEADER = [
@@ -369,13 +370,44 @@ if mode == "Live / Custom Match":
         "No bookmaker odds needed for H/D/A."
     )
 
+    # ── Load upcoming GW fixtures from FPL API ──────────────────────────────
+    if st.button("📥 Load Upcoming GW Fixtures", help="Fetches next gameweek fixtures from the FPL API"):
+        with st.spinner("Fetching fixtures..."):
+            try:
+                fixtures = get_upcoming_fixtures()
+                if fixtures:
+                    st.session_state["upcoming_fixtures"] = fixtures
+                    st.success(f"Loaded GW {fixtures[0]['gw']} — {len(fixtures)} fixtures")
+                else:
+                    st.warning("No upcoming fixtures found.")
+            except Exception as e:
+                st.error(f"Failed to fetch fixtures: {e}")
+
+    if "upcoming_fixtures" in st.session_state and st.session_state["upcoming_fixtures"]:
+        fx = st.session_state["upcoming_fixtures"]
+        options = [f"{f['home_team']} vs {f['away_team']}  ({f['date']})" for f in fx]
+        chosen = st.selectbox("Select fixture", ["— pick one —"] + options)
+        if chosen != "— pick one —":
+            idx = options.index(chosen)
+            sel = fx[idx]
+            st.session_state["fixture_home"] = sel["home_team"]
+            st.session_state["fixture_away"] = sel["away_team"]
+            st.session_state["fixture_date"] = datetime.strptime(sel["date"], "%Y-%m-%d") if sel["date"] else datetime.today()
+
+    st.markdown("---")
+
     col1, col2 = st.columns(2)
     with col1:
-        home_team = st.text_input("🏠 Home Team", placeholder="e.g. Arsenal")
+        home_team = st.text_input("🏠 Home Team",
+                                  value=st.session_state.get("fixture_home", ""),
+                                  placeholder="e.g. Arsenal")
     with col2:
-        away_team = st.text_input("✈️ Away Team", placeholder="e.g. Chelsea")
+        away_team = st.text_input("✈️ Away Team",
+                                  value=st.session_state.get("fixture_away", ""),
+                                  placeholder="e.g. Chelsea")
 
-    match_date = st.date_input("📅 Match Date", value=datetime.today())
+    match_date = st.date_input("📅 Match Date",
+                               value=st.session_state.get("fixture_date", datetime.today()))
 
     st.markdown("#### Lineup (optional — activates lineup-aware model)")
     use_lineup = st.checkbox("Lineups confirmed", value=False,

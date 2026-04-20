@@ -1,17 +1,11 @@
 """
-Build H/D/A training dataset V4.
+Build H/D/A training dataset V4 (26 features).
 
-Extends V3 base (24 features) with two new signals:
+Extends V3 base (24 features) with:
   1A. Opponent quality: home_opp_ppg_l5, away_opp_ppg_l5
-      — rolling avg PPG of last 5 opponents faced (schedule difficulty)
-  1B. EWM form: home_pts_ewm, home_goals_ewm, home_sot_ewm (and away_*)
-      — EWMA(span=5) of per-match form, replacing l3-l5 linear momentum
+  1B. EWM form (span=7): pts_ewm, goals_ewm, sot_ewm replacing momentum cols
 
-V4 feature set variants (defined in backtest_v4.py):
-  BASE_24    — original 24 V3 features
-  BASE_OPP   — 24 + opp_ppg_l5 (1A)
-  EWM_SWAP   — 24 with momentum cols replaced by ewm (1B, still 24)
-  EWM_OPP    — 1A + 1B combined (26 features)
+Standalone — no dependency on build_dataset_v3.
 """
 
 from __future__ import annotations
@@ -27,17 +21,37 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ml.build_dataset_v3 import (
-    load_matches,
-    compute_elo,
-    VENUE_FALLBACK_MIN,
-    LAST_N,
-    LAST_N_SHORT,
-)
 from src.ml.elo import EloCalculator
 
 DB_PATH     = PROJECT_ROOT / "data" / "processed" / "asil.db"
 OUTPUT_PATH = PROJECT_ROOT / "data" / "processed" / "training_dataset_v4.csv"
+
+VENUE_FALLBACK_MIN = 3
+LAST_N             = 5
+LAST_N_SHORT       = 3
+
+
+def load_matches() -> pd.DataFrame:
+    conn = sqlite3.connect(str(DB_PATH))
+    df = pd.read_sql("""
+        SELECT match_id, date, season, home_team, away_team,
+               home_goals, away_goals, result,
+               home_shots_target, away_shots_target
+        FROM matches
+        WHERE home_goals IS NOT NULL
+          AND home_shots_target IS NOT NULL
+        ORDER BY date ASC
+    """, conn)
+    conn.close()
+    df["season"] = df["season"].astype(str)
+    df["date"]   = pd.to_datetime(df["date"])
+    return df
+
+
+def compute_elo(matches_df: pd.DataFrame) -> pd.DataFrame:
+    records = matches_df[["match_id", "date", "home_team", "away_team", "result"]].to_dict("records")
+    elo_map = EloCalculator().compute(records)
+    return pd.DataFrame([{"match_id": mid, "elo_diff": vals["elo_diff"]} for mid, vals in elo_map.items()])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
